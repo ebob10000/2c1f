@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"context"
+	"flag"
 	"fmt"
 	"os"
 	"os/signal"
@@ -16,24 +17,36 @@ import (
 )
 
 // Send starts the sender mode
-func Send(folderPath string) {
+func Send(args []string) {
+	fs := flag.NewFlagSet("send", flag.ExitOnError)
+	noCompress := fs.Bool("no-compress", false, "Disable compression")
+	fs.Parse(args)
+
+	folderPath := fs.Arg(0)
+	if folderPath == "" {
+		fmt.Print("Enter path to file or folder: ")
+		fmt.Scanln(&folderPath)
+	}
+	if folderPath == "" {
+		fmt.Println("Error: Path required")
+		os.Exit(1)
+	}
+
 	info, err := os.Stat(folderPath)
 	if err != nil {
-		fmt.Printf("Error: Cannot access folder: %v\n", err)
+		fmt.Printf("Error: Cannot access path: %v\n", err)
 		os.Exit(1)
 	}
-	if !info.IsDir() {
-		fmt.Printf("Error: Path is not a directory: %s\n", folderPath)
-		os.Exit(1)
-	}
+	// Removed IsDir check to allow single files
 
 	sender, err := transfer.NewSender(folderPath)
 	if err != nil {
-		fmt.Printf("Error: Failed to scan folder: %v\n", err)
+		fmt.Printf("Error: Failed to scan path: %v\n", err)
 		os.Exit(1)
 	}
+	sender.NoCompress = *noCompress
 
-	fmt.Printf("Folder: %s (%d files)\n", sender.Manifest.FolderName, len(sender.Manifest.Files))
+	fmt.Printf("Sending: %s (%d files)\n", sender.Manifest.FolderName, len(sender.Manifest.Files))
 
 	// Pre-calculate file offsets for global progress tracking
 	fileOffsets := make(map[string]int64)
@@ -139,16 +152,20 @@ func Send(folderPath string) {
 			return
 		}
 
-		compressedStream, err := transfer.NewCompressedStream(stream)
-		if err != nil {
-			fmt.Printf("Failed to initialize compression: %v\n", err)
-			stream.Close()
-			transferDone <- err
-			return
+		var dataStream io.ReadWriter = stream
+		if !sender.NoCompress {
+			compressedStream, err := transfer.NewCompressedStream(stream)
+			if err != nil {
+				fmt.Printf("Failed to initialize compression: %v\n", err)
+				stream.Close()
+				transferDone <- err
+				return
+			}
+			defer compressedStream.Close()
+			dataStream = compressedStream
 		}
-		defer compressedStream.Close()
 
-		err = sender.Send(compressedStream)
+		err = sender.Send(dataStream)
 		transferDone <- err
 	})
 

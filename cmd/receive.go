@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"context"
+	"flag"
 	"fmt"
 	"os"
 	"os/signal"
@@ -14,11 +15,29 @@ import (
 )
 
 // Receive starts the receiver mode
-func Receive(code string) {
-	// Get current directory as destination
-	destPath, err := os.Getwd()
-	if err != nil {
-		destPath = "."
+func Receive(args []string) {
+	fs := flag.NewFlagSet("receive", flag.ExitOnError)
+	outputDir := fs.String("o", "", "Output directory")
+	fs.Parse(args)
+
+	code := fs.Arg(0)
+	if code == "" {
+		fmt.Print("Enter connection code: ")
+		fmt.Scanln(&code)
+	}
+	if code == "" {
+		fmt.Println("Error: Code required")
+		os.Exit(1)
+	}
+
+	// Get current directory as destination if not specified
+	destPath := *outputDir
+	if destPath == "" {
+		var err error
+		destPath, err = os.Getwd()
+		if err != nil {
+			destPath = "."
+		}
 	}
 
 	fmt.Printf("Code: %s\n", code)
@@ -63,17 +82,27 @@ func Receive(code string) {
 		fmt.Printf("Error: Failed to open stream: %v\n", err)
 		os.Exit(1)
 	}
-	
-	compressedStream, err := transfer.NewCompressedStream(stream)
-	if err != nil {
-		fmt.Printf("Error: Failed to initialize compression: %v\n", err)
-		stream.Close()
-		os.Exit(1)
-	}
-	defer compressedStream.Close()
+	defer stream.Close()
 
 	receiver := transfer.NewReceiver(destPath)
 	receiver.Code = code
+
+	// Confirmation Callback
+	receiver.OnConfirmation = func(m *transfer.Manifest) bool {
+		fmt.Println("\nIncoming Transfer:")
+		fmt.Printf("  Name: %s\n", m.FolderName)
+		fmt.Printf("  Size: %s\n", transfer.FormatBytes(m.TotalSize)) // Ensure FormatBytes is public or copy logic
+		fmt.Printf("  Files: %d\n", len(m.Files))
+		
+		fmt.Print("Accept? [y/N]: ")
+		var response string
+		fmt.Scanln(&response)
+		if response == "y" || response == "Y" {
+			return true
+		}
+		fmt.Println("Transfer rejected.")
+		return false
+	}
 
 	var bar *progressbar.ProgressBar
 	fileOffsets := make(map[string]int64)
@@ -118,7 +147,7 @@ func Receive(code string) {
 		}
 	}
 
-	if err := receiver.Receive(compressedStream); err != nil {
+	if err := receiver.Receive(stream); err != nil {
 		fmt.Printf("Error: Transfer failed: %v\n", err)
 		os.Exit(1)
 	}

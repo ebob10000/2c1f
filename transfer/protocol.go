@@ -21,12 +21,23 @@ const (
 	MsgComplete
 	MsgError
 	MsgHandshake
+	MsgHandshakeAck
 )
 
 // Message is the base protocol message
 type Message struct {
 	Type    MessageType `json:"type"`
 	Payload []byte      `json:"payload,omitempty"`
+}
+
+// HandshakeMsg is sent by the receiver to authenticate
+type HandshakeMsg struct {
+	Code string `json:"code"`
+}
+
+// HandshakeAckMsg is sent by the sender to confirm and set options
+type HandshakeAckMsg struct {
+	Compress bool `json:"compress"`
 }
 
 // Manifest describes the folder being transferred

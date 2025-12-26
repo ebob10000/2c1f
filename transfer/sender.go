@@ -12,11 +12,12 @@ const ChunkSize = 64 * 1024 // 64KB chunks
 
 // Sender handles sending files to a peer
 type Sender struct {
-	FolderPath string
-	Code       string
-	Manifest   *Manifest
+	FolderPath  string
+	Code        string
+	NoCompress  bool
+	Manifest    *Manifest
 	OnStartFile func(filename string, index, total int)
-	OnProgress func(filename string, sent, total int64)
+	OnProgress  func(filename string, sent, total int64)
 }
 
 // NewSender creates a new sender for the given folder
@@ -32,8 +33,9 @@ func NewSender(folderPath string) (*Sender, error) {
 	}, nil
 }
 
-// Handshake performs the initial code verification
+// Handshake performs the initial code verification and negotiates options
 func (s *Sender) Handshake(stream io.ReadWriter) error {
+	// 1. Read Handshake from Receiver
 	msg, err := ReadMessage(stream)
 	if err != nil {
 		return fmt.Errorf("failed to read handshake: %w", err)
@@ -41,11 +43,32 @@ func (s *Sender) Handshake(stream io.ReadWriter) error {
 	if msg.Type != MsgHandshake {
 		return fmt.Errorf("expected handshake, got %d", msg.Type)
 	}
-	if string(msg.Payload) != s.Code {
-		errMsg := "invalid connection code"
-		WriteMessage(stream, &Message{Type: MsgError, Payload: []byte(errMsg)})
-		return fmt.Errorf(errMsg)
+	
+	var handshake HandshakeMsg
+	if err := json.Unmarshal(msg.Payload, &handshake); err != nil {
+		// Fallback for older clients or plain string payload
+		if string(msg.Payload) != s.Code {
+			errMsg := "invalid connection code"
+			WriteMessage(stream, &Message{Type: MsgError, Payload: []byte(errMsg)})
+			return fmt.Errorf(errMsg)
+		}
+	} else {
+		if handshake.Code != s.Code {
+			errMsg := "invalid connection code"
+			WriteMessage(stream, &Message{Type: MsgError, Payload: []byte(errMsg)})
+			return fmt.Errorf(errMsg)
+		}
 	}
+
+	// 2. Send HandshakeAck with options
+	ack := HandshakeAckMsg{
+		Compress: !s.NoCompress,
+	}
+	ackData, _ := json.Marshal(ack)
+	if err := WriteMessage(stream, &Message{Type: MsgHandshakeAck, Payload: ackData}); err != nil {
+		return fmt.Errorf("failed to send handshake ack: %w", err)
+	}
+
 	return nil
 }
 
@@ -54,7 +77,7 @@ func (s *Sender) Send(stream io.ReadWriter) error {
 	fmt.Printf("Sending manifest: %s (%d files, %s)\n",
 		s.Manifest.FolderName,
 		len(s.Manifest.Files),
-		formatBytes(s.Manifest.TotalSize))
+		FormatBytes(s.Manifest.TotalSize))
 
 	if err := SendManifest(stream, s.Manifest); err != nil {
 		return fmt.Errorf("failed to send manifest: %w", err)
@@ -154,7 +177,7 @@ func (s *Sender) sendFile(stream io.ReadWriter, entry FileEntry, offset int64) e
 	return WriteMessage(stream, &Message{Type: MsgFileEnd})
 }
 
-func formatBytes(bytes int64) string {
+func FormatBytes(bytes int64) string {
 	const (
 		KB = 1024
 		MB = KB * 1024
