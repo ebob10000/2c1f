@@ -8,9 +8,9 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/2c1f/2c1f/p2p"
-	"github.com/2c1f/2c1f/transfer"
-	"github.com/2c1f/2c1f/words"
+	"github.com/ebob10000/2c1f/p2p"
+	"github.com/ebob10000/2c1f/transfer"
+	"github.com/ebob10000/2c1f/words"
 	"github.com/libp2p/go-libp2p/core/network"
 )
 

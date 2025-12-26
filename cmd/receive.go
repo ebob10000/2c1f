@@ -8,8 +8,8 @@ import (
 	"path/filepath"
 	"syscall"
 
-	"github.com/2c1f/2c1f/p2p"
-	"github.com/2c1f/2c1f/transfer"
+	"github.com/ebob10000/2c1f/p2p"
+	"github.com/ebob10000/2c1f/transfer"
 )
 
 // Receive starts the receiver mode
