@@ -8,9 +8,8 @@
 If you have Go installed, this is the easiest way. It compiles the app and adds it to your system path automatically.
 
 ```bash
-go install github.com/2c1f/2c1f@latest
+go install github.com/ebob10000/2c1f@latest
 ```
-*(Note: Replace `github.com/2c1f/2c1f` with your actual repo URL once published)*
 
 ### Option 2: Build from Source
 1. Clone the repo:
