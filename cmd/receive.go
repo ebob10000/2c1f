@@ -73,6 +73,7 @@ func Receive(code string) {
 	defer compressedStream.Close()
 
 	receiver := transfer.NewReceiver(destPath)
+	receiver.Code = code
 
 	var bar *progressbar.ProgressBar
 	fileOffsets := make(map[string]int64)

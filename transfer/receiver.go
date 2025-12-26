@@ -11,6 +11,7 @@ import (
 // Receiver handles receiving files from a peer
 type Receiver struct {
 	DestPath   string
+	Code       string
 	Manifest   *Manifest
 	OnStartFile func(filename string, index, total int)
 	OnProgress func(filename string, received, total int64)
@@ -25,9 +26,18 @@ func NewReceiver(destPath string) *Receiver {
 
 // Receive reads files from the stream and saves them
 func (r *Receiver) Receive(stream io.ReadWriter) error {
+	// 1. Send Handshake
+	if err := WriteMessage(stream, &Message{Type: MsgHandshake, Payload: []byte(r.Code)}); err != nil {
+		return fmt.Errorf("failed to send handshake: %w", err)
+	}
+
 	msg, err := ReadMessage(stream)
 	if err != nil {
 		return fmt.Errorf("failed to read manifest: %w", err)
+	}
+
+	if msg.Type == MsgError {
+		return fmt.Errorf("handshake rejected: %s", string(msg.Payload))
 	}
 
 	manifest, err := ParseManifest(msg)

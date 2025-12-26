@@ -13,6 +13,7 @@ const ChunkSize = 64 * 1024 // 64KB chunks
 // Sender handles sending files to a peer
 type Sender struct {
 	FolderPath string
+	Code       string
 	Manifest   *Manifest
 	OnStartFile func(filename string, index, total int)
 	OnProgress func(filename string, sent, total int64)
@@ -33,6 +34,20 @@ func NewSender(folderPath string) (*Sender, error) {
 
 // Send transfers all files over the stream
 func (s *Sender) Send(stream io.ReadWriter) error {
+	// 1. Wait for Handshake
+	msg, err := ReadMessage(stream)
+	if err != nil {
+		return fmt.Errorf("failed to read handshake: %w", err)
+	}
+	if msg.Type != MsgHandshake {
+		return fmt.Errorf("expected handshake, got %d", msg.Type)
+	}
+	if string(msg.Payload) != s.Code {
+		errMsg := "invalid connection code"
+		WriteMessage(stream, &Message{Type: MsgError, Payload: []byte(errMsg)})
+		return fmt.Errorf(errMsg)
+	}
+
 	fmt.Printf("Sending manifest: %s (%d files, %s)\n",
 		s.Manifest.FolderName,
 		len(s.Manifest.Files),

@@ -21,7 +21,7 @@ import (
 )
 
 const (
-	ProtocolID      = "/2c1f/transfer/1.1.0"
+	ProtocolID      = "/2c1f/transfer/1.2.0"
 	RendezvousNS    = "2c1f-rendezvous"
 	DiscoveryPeriod = 10 * time.Second
 	MDNSServiceTag  = "2c1f-local"

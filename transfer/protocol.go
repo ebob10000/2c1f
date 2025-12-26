@@ -20,6 +20,7 @@ const (
 	MsgFileEnd
 	MsgComplete
 	MsgError
+	MsgHandshake
 )
 
 // Message is the base protocol message

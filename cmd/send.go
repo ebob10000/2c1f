@@ -76,6 +76,7 @@ func Send(folderPath string) {
 		fmt.Printf("Error: Failed to generate code: %v\n", err)
 		os.Exit(1)
 	}
+	sender.Code = code
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
