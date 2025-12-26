@@ -32,9 +32,8 @@ func NewSender(folderPath string) (*Sender, error) {
 	}, nil
 }
 
-// Send transfers all files over the stream
-func (s *Sender) Send(stream io.ReadWriter) error {
-	// 1. Wait for Handshake
+// Handshake performs the initial code verification
+func (s *Sender) Handshake(stream io.ReadWriter) error {
 	msg, err := ReadMessage(stream)
 	if err != nil {
 		return fmt.Errorf("failed to read handshake: %w", err)
@@ -47,7 +46,11 @@ func (s *Sender) Send(stream io.ReadWriter) error {
 		WriteMessage(stream, &Message{Type: MsgError, Payload: []byte(errMsg)})
 		return fmt.Errorf(errMsg)
 	}
+	return nil
+}
 
+// Send transfers all files over the stream
+func (s *Sender) Send(stream io.ReadWriter) error {
 	fmt.Printf("Sending manifest: %s (%d files, %s)\n",
 		s.Manifest.FolderName,
 		len(s.Manifest.Files),

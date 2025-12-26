@@ -114,7 +114,30 @@ func Send(folderPath string) {
 
 	transferDone := make(chan error, 1)
 	node.SetStreamHandler(func(stream network.Stream) {
-		fmt.Printf("\nPeer connected: %s\n", stream.Conn().RemotePeer().String()[:12])
+		peerID := stream.Conn().RemotePeer()
+		fmt.Printf("\nPeer connected: %s\n", peerID.String()[:12])
+
+		// Perform handshake and transfer in a separate goroutine to not block the listener
+		// But wait for it to finish before exiting main
+		
+		// Note: For simplicity in this CLI, we handle one connection then exit.
+		// Handshake
+		err := sender.Handshake(stream)
+		if err != nil {
+			fmt.Printf("Handshake failed: %v\n", err)
+			stream.Close()
+			return // Don't exit app, maybe another peer will connect
+		}
+
+		// Interactive Confirmation
+		fmt.Printf("Connection request from %s. Accept? [y/N]: ", peerID.String()[:12])
+		var response string
+		fmt.Scanln(&response)
+		if response != "y" && response != "Y" {
+			fmt.Println("Connection rejected.")
+			stream.Close()
+			return
+		}
 
 		compressedStream, err := transfer.NewCompressedStream(stream)
 		if err != nil {
