@@ -4,6 +4,7 @@ import (
 	"context"
 	"flag"
 	"fmt"
+	"io"
 	"os"
 	"os/signal"
 	"syscall"
@@ -32,7 +33,7 @@ func Send(args []string) {
 		os.Exit(1)
 	}
 
-	info, err := os.Stat(folderPath)
+	_, err := os.Stat(folderPath)
 	if err != nil {
 		fmt.Printf("Error: Cannot access path: %v\n", err)
 		os.Exit(1)

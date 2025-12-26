@@ -15,6 +15,7 @@ type Receiver struct {
 	Manifest   *Manifest
 	OnStartFile func(filename string, index, total int)
 	OnProgress func(filename string, received, total int64)
+	OnConfirmation func(m *Manifest) bool
 }
 
 // NewReceiver creates a new receiver
@@ -46,6 +47,13 @@ func (r *Receiver) Receive(stream io.ReadWriter) error {
 	}
 	r.Manifest = manifest
 
+	if r.OnConfirmation != nil {
+		if !r.OnConfirmation(manifest) {
+			WriteMessage(stream, &Message{Type: MsgError, Payload: []byte("Transfer rejected by receiver")})
+			return fmt.Errorf("transfer rejected by user")
+		}
+	}
+
 	destFolder := filepath.Join(r.DestPath, manifest.FolderName)
 	
 	// Calculate resume offsets
@@ -69,10 +77,10 @@ func (r *Receiver) Receive(stream io.ReadWriter) error {
 	fmt.Printf("Receiving: %s (%d files, %s)\n",
 		manifest.FolderName,
 		len(manifest.Files),
-		formatBytes(manifest.TotalSize))
+		FormatBytes(manifest.TotalSize))
 	
 	if existingSize > 0 {
-		fmt.Printf("Resuming transfer... found %s existing data\n", formatBytes(existingSize))
+		fmt.Printf("Resuming transfer... found %s existing data\n", FormatBytes(existingSize))
 	}
 
 	if err := os.MkdirAll(destFolder, 0755); err != nil {
