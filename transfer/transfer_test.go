@@ -1,6 +1,7 @@
 package transfer
 
 import (
+	"io"
 	"net"
 	"os"
 	"path/filepath"
@@ -51,14 +52,28 @@ func TestTransfer(t *testing.T) {
 			return
 		}
 		sender.Code = "123-456" // Match the code
-		sender.NoCompress = true
+		// Compression is enabled by default
 
 		if err := sender.Handshake(p2); err != nil {
 			t.Errorf("Sender handshake failed: %v", err)
 			return
 		}
 
-		if err := sender.Send(p2); err != nil {
+		// Wrap stream if compression is enabled (default)
+		var dataStream io.ReadWriter = p2
+		// Wait, io.ReadWriter is interface.
+		// We need to implement the wrapping logic here
+		if !sender.NoCompress {
+			compressed, err := NewCompressedStream(p2)
+			if err != nil {
+				t.Errorf("Failed to create compressed stream: %v", err)
+				return
+			}
+			defer compressed.Close()
+			dataStream = compressed
+		}
+
+		if err := sender.Send(dataStream); err != nil {
 			t.Errorf("Sender failed: %v", err)
 			return
 		}

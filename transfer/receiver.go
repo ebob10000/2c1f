@@ -80,7 +80,7 @@ func (r *Receiver) Receive(stream io.ReadWriteCloser) error {
 
 	if r.OnConfirmation != nil {
 		if !r.OnConfirmation(manifest) {
-			WriteMessage(stream, &Message{Type: MsgError, Payload: []byte("Transfer rejected by receiver")})
+			WriteMessage(dataStream, &Message{Type: MsgError, Payload: []byte("Transfer rejected by receiver")})
 			return fmt.Errorf("transfer rejected by user")
 		}
 	}
@@ -124,13 +124,13 @@ func (r *Receiver) Receive(stream io.ReadWriteCloser) error {
 	if err != nil {
 		return err
 	}
-	if err := WriteMessage(stream, &Message{Type: MsgResume, Payload: resumeData}); err != nil {
+	if err := WriteMessage(dataStream, &Message{Type: MsgResume, Payload: resumeData}); err != nil {
 		return fmt.Errorf("failed to send resume message: %w", err)
 	}
 
 	fileCount := 0
 	for {
-		msg, err := ReadMessage(stream)
+		msg, err := ReadMessage(dataStream)
 		if err != nil {
 			return fmt.Errorf("failed to read message: %w", err)
 		}
@@ -138,7 +138,7 @@ func (r *Receiver) Receive(stream io.ReadWriteCloser) error {
 		switch msg.Type {
 		case MsgFileStart:
 			fileCount++
-			if err := r.receiveFile(stream, msg, destFolder, fileCount, len(manifest.Files)); err != nil {
+			if err := r.receiveFile(dataStream, msg, destFolder, fileCount, len(manifest.Files)); err != nil {
 				return err
 			}
 
