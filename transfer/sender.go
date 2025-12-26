@@ -2,6 +2,7 @@ package transfer
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -50,13 +51,13 @@ func (s *Sender) Handshake(stream io.ReadWriter) error {
 		if string(msg.Payload) != s.Code {
 			errMsg := "invalid connection code"
 			WriteMessage(stream, &Message{Type: MsgError, Payload: []byte(errMsg)})
-			return fmt.Errorf(errMsg)
+			return errors.New(errMsg)
 		}
 	} else {
 		if handshake.Code != s.Code {
 			errMsg := "invalid connection code"
 			WriteMessage(stream, &Message{Type: MsgError, Payload: []byte(errMsg)})
-			return fmt.Errorf(errMsg)
+			return errors.New(errMsg)
 		}
 	}
 

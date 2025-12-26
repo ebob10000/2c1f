@@ -1,19 +1,11 @@
 package transfer
 
 import (
-	"io"
+	"net"
 	"os"
 	"path/filepath"
 	"testing"
 )
-
-type MockStream struct {
-	*io.PipeWriter
-}
-
-func (m *MockStream) Read(p []byte) (n int, err error) {
-	select {} // Block forever as we don't expect sender to read
-}
 
 func TestTransfer(t *testing.T) {
 	// Setup source folder with some files
@@ -38,28 +30,39 @@ func TestTransfer(t *testing.T) {
 	destDir := t.TempDir()
 
 	// Create pipe to simulate network connection
-	r, w := io.Pipe()
-
-	senderStream := &MockStream{PipeWriter: w}
+	p1, p2 := net.Pipe()
 
 	// Run Receiver in a goroutine
 	errChan := make(chan error, 1)
 	go func() {
+		defer p1.Close()
 		receiver := NewReceiver(destDir)
-		err := receiver.Receive(r)
+		receiver.Code = "123-456" // Set a code for handshake
+		err := receiver.Receive(p1)
 		errChan <- err
 	}()
 
 	// Run Sender
-	sender, err := NewSender(srcDir)
-	if err != nil {
-		t.Fatalf("Failed to create sender: %v", err)
-	}
+	go func() {
+		defer p2.Close()
+		sender, err := NewSender(srcDir)
+		if err != nil {
+			t.Errorf("Failed to create sender: %v", err)
+			return
+		}
+		sender.Code = "123-456" // Match the code
+		sender.NoCompress = true
 
-	if err := sender.Send(senderStream); err != nil {
-		t.Fatalf("Sender failed: %v", err)
-	}
-	w.Close() // Close writer to signal EOF to receiver if it keeps reading
+		if err := sender.Handshake(p2); err != nil {
+			t.Errorf("Sender handshake failed: %v", err)
+			return
+		}
+
+		if err := sender.Send(p2); err != nil {
+			t.Errorf("Sender failed: %v", err)
+			return
+		}
+	}()
 
 	// Wait for receiver
 	if err := <-errChan; err != nil {
