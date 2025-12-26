@@ -2,10 +2,21 @@ package main
 
 import (
 	"fmt"
+	"io"
+	"log"
 	"os"
 
 	"github.com/ebob10000/2c1f/cmd"
+	golog "github.com/ipfs/go-log/v2"
 )
+
+func init() {
+	// Disable standard log output (used by some libraries like zeroconf)
+	log.SetOutput(io.Discard)
+
+	// Set ipfs/go-log to error level to suppress warnings from libp2p/mdns
+	golog.SetAllLoggers(golog.LevelError)
+}
 
 func main() {
 	if len(os.Args) < 2 {
