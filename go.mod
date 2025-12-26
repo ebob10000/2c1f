@@ -1,4 +1,4 @@
-module github.com/2c1f/2c1f
+module github.com/ebob10000/2c1f
 
 go 1.22.0
 
