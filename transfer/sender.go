@@ -14,6 +14,7 @@ const ChunkSize = 64 * 1024 // 64KB chunks
 type Sender struct {
 	FolderPath string
 	Manifest   *Manifest
+	OnStartFile func(filename string, index, total int)
 	OnProgress func(filename string, sent, total int64)
 }
 
@@ -64,15 +65,8 @@ func (s *Sender) Send(stream io.ReadWriter) error {
 			offset = file.Size // Mark as complete
 		}
 
-		fmt.Printf("[%d/%d] Sending: %s", i+1, len(s.Manifest.Files), file.Path)
-		if offset > 0 {
-			if offset == file.Size {
-				fmt.Printf(" (Skipping - existing)\n")
-			} else {
-				fmt.Printf(" (Resuming from %s)\n", formatBytes(offset))
-			}
-		} else {
-			fmt.Printf("\n")
+		if s.OnStartFile != nil {
+			s.OnStartFile(file.Path, i+1, len(s.Manifest.Files))
 		}
 
 		if err := s.sendFile(stream, file, offset); err != nil {

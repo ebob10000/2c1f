@@ -12,6 +12,7 @@ import (
 type Receiver struct {
 	DestPath   string
 	Manifest   *Manifest
+	OnStartFile func(filename string, index, total int)
 	OnProgress func(filename string, received, total int64)
 }
 
@@ -111,9 +112,12 @@ func (r *Receiver) receiveFile(stream io.Reader, startMsg *Message, destFolder s
 		return err
 	}
 
+	if r.OnStartFile != nil {
+		r.OnStartFile(fileStart.Path, current, total)
+	}
+
 	// Skip if fully downloaded
 	if fileStart.Offset == fileStart.Size {
-		fmt.Printf("[%d/%d] Skipping: %s (already downloaded)\n", current, total, fileStart.Path)
 		// Even if skipped, we need to read the MsgFileEnd that the sender sends
 		endMsg, err := ReadMessage(stream)
 		if err != nil {
@@ -123,12 +127,6 @@ func (r *Receiver) receiveFile(stream io.Reader, startMsg *Message, destFolder s
 			return fmt.Errorf("expected file end message, got %d", endMsg.Type)
 		}
 		return nil
-	}
-
-	if fileStart.Offset > 0 {
-		fmt.Printf("[%d/%d] Resuming: %s (from %s)\n", current, total, fileStart.Path, formatBytes(fileStart.Offset))
-	} else {
-		fmt.Printf("[%d/%d] Receiving: %s\n", current, total, fileStart.Path)
 	}
 
 	filePath := filepath.Join(destFolder, filepath.FromSlash(fileStart.Path))

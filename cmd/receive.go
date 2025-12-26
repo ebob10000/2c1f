@@ -77,7 +77,7 @@ func Receive(code string) {
 	var bar *progressbar.ProgressBar
 	fileOffsets := make(map[string]int64)
 
-	receiver.OnProgress = func(filename string, received, total int64) {
+	receiver.OnStartFile = func(filename string, index, total int) {
 		if bar == nil {
 			if receiver.Manifest != nil {
 				var currentOffset int64
@@ -85,13 +85,31 @@ func Receive(code string) {
 					fileOffsets[f.Path] = currentOffset
 					currentOffset += f.Size
 				}
-				bar = progressbar.DefaultBytes(
+				bar = progressbar.NewOptions64(
 					receiver.Manifest.TotalSize,
-					"receiving",
+					progressbar.OptionSetDescription("receiving"),
+					progressbar.OptionShowBytes(true),
+					progressbar.OptionSetWidth(20),
+					progressbar.OptionShowCount(),
+					progressbar.OptionOnCompletion(func() {
+						fmt.Println()
+					}),
+					progressbar.OptionSetTheme(progressbar.Theme{
+						Saucer:        "=",
+						SaucerHead:    ">",
+						SaucerPadding: " ",
+						BarStart:      "[",
+						BarEnd:        "]",
+					}),
 				)
 			}
 		}
+		if bar != nil {
+			bar.Describe(fmt.Sprintf("Receiving %s (%d/%d)", filename, index, total))
+		}
+	}
 
+	receiver.OnProgress = func(filename string, received, total int64) {
 		if bar != nil {
 			if offset, ok := fileOffsets[filename]; ok {
 				bar.Set64(offset + received)

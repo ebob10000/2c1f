@@ -43,10 +43,27 @@ func Send(folderPath string) {
 		currentOffset += f.Size
 	}
 
-	bar := progressbar.DefaultBytes(
+	bar := progressbar.NewOptions64(
 		sender.Manifest.TotalSize,
-		"sending",
+		progressbar.OptionSetDescription("sending"),
+		progressbar.OptionShowBytes(true),
+		progressbar.OptionSetWidth(20),
+		progressbar.OptionShowCount(),
+		progressbar.OptionOnCompletion(func() {
+			fmt.Println()
+		}),
+		progressbar.OptionSetTheme(progressbar.Theme{
+			Saucer:        "=",
+			SaucerHead:    ">",
+			SaucerPadding: " ",
+			BarStart:      "[",
+			BarEnd:        "]",
+		}),
 	)
+
+	sender.OnStartFile = func(filename string, index, total int) {
+		bar.Describe(fmt.Sprintf("Sending %s (%d/%d)", filename, index, total))
+	}
 
 	sender.OnProgress = func(filename string, sent, total int64) {
 		if offset, ok := fileOffsets[filename]; ok {
