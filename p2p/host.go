@@ -140,8 +140,6 @@ func (n *Node) Bootstrap() error {
 		return fmt.Errorf("failed to connect to any bootstrap peers")
 	}
 
-	fmt.Printf("Connected to %d bootstrap peers\n", connected)
-
 	n.Discovery = routing.NewRoutingDiscovery(n.DHT)
 
 	return nil
@@ -150,7 +148,6 @@ func (n *Node) Bootstrap() error {
 // Advertise announces this node on the DHT for a given rendezvous code
 func (n *Node) Advertise(code string) error {
 	rendezvous := codeToRendezvous(code)
-	fmt.Printf("Advertising on rendezvous: %s\n", rendezvous)
 
 	_, err := n.Discovery.Advertise(n.Ctx, rendezvous)
 	if err != nil {
@@ -163,7 +160,6 @@ func (n *Node) Advertise(code string) error {
 // FindPeer searches for a peer advertising the given code
 func (n *Node) FindPeer(code string) (peer.ID, error) {
 	rendezvous := codeToRendezvous(code)
-	fmt.Printf("Searching for peer on rendezvous: %s\n", rendezvous)
 
 	peerChan, err := n.Discovery.FindPeers(n.Ctx, rendezvous)
 	if err != nil {
@@ -178,18 +174,14 @@ func (n *Node) FindPeer(code string) (peer.ID, error) {
 			continue
 		}
 
-		fmt.Printf("Found peer: %s\n", p.ID.String()[:12])
-
 		ctx, cancel := context.WithTimeout(n.Ctx, 60*time.Second)
 		err := n.Host.Connect(ctx, p)
 		cancel()
 
 		if err != nil {
-			fmt.Printf("Failed to connect to peer: %v\n", err)
 			continue
 		}
 
-		fmt.Printf("Connected to peer!\n")
 		n.mu.Lock()
 		n.ConnectedPeer = p.ID
 		n.mu.Unlock()
