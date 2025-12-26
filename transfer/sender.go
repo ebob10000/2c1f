@@ -84,6 +84,11 @@ func (s *Sender) Send(stream io.ReadWriter) error {
 		return fmt.Errorf("failed to send completion: %w", err)
 	}
 
+	fmt.Println("Waiting for receiver to finish...")
+	// Wait for the receiver to process the completion message and close the stream.
+	// This ensures the connection isn't torn down while data is still buffered.
+	io.ReadAll(stream)
+
 	fmt.Println("Transfer complete!")
 	return nil
 }
