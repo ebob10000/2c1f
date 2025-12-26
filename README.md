@@ -2,7 +2,7 @@
 
 **2c1f** is a blazing fast, secure, and simple P2P file transfer tool for the command line. It uses a 3-word code (like `apple-banana-cookie`) to connect two computers directly, even if they are behind different firewalls or NATs.
 
-## 🚀 Fast Setup
+## Fast Setup
 
 ### Option 1: Install with Go (Recommended)
 If you have Go installed, this is the easiest way. It compiles the app and adds it to your system path automatically.
@@ -23,7 +23,7 @@ go install github.com/2c1f/2c1f@latest
    go build -o 2c1f.exe main.go
    ```
 
-## 📖 Usage
+## Usage
 
 ### Sending a Folder
 1. Go to the directory containing the folder you want to send.
@@ -40,7 +40,7 @@ go install github.com/2c1f/2c1f@latest
    ```
 2. The transfer will start immediately.
 
-## ✨ Features
+## Features
 - **Peer-to-Peer:** Direct transfer between devices.
 - **NAT Traversal:** Works across different networks (home vs. office) using libp2p.
 - **Local Discovery:** Instantly finds peers on the same Wi-Fi.
@@ -48,7 +48,7 @@ go install github.com/2c1f/2c1f@latest
 - **Compressed:** Text/code transfers are compressed for speed.
 - **Secure:** End-to-end encrypted streams.
 
-## 🛠️ Tech Stack
+## Tech Stack
 - **Language:** Go (Golang)
 - **Networking:** libp2p (DHT, Relay, MDNS)
 - **Discovery:** Public DHT + Local MDNS
