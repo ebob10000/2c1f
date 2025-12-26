@@ -12,6 +12,7 @@ import (
 	"github.com/ebob10000/2c1f/transfer"
 	"github.com/ebob10000/2c1f/words"
 	"github.com/libp2p/go-libp2p/core/network"
+	"github.com/schollz/progressbar/v3"
 )
 
 // Send starts the sender mode
@@ -33,6 +34,25 @@ func Send(folderPath string) {
 	}
 
 	fmt.Printf("Folder: %s (%d files)\n", sender.Manifest.FolderName, len(sender.Manifest.Files))
+
+	// Pre-calculate file offsets for global progress tracking
+	fileOffsets := make(map[string]int64)
+	var currentOffset int64
+	for _, f := range sender.Manifest.Files {
+		fileOffsets[f.Path] = currentOffset
+		currentOffset += f.Size
+	}
+
+	bar := progressbar.DefaultBytes(
+		sender.Manifest.TotalSize,
+		"sending",
+	)
+
+	sender.OnProgress = func(filename string, sent, total int64) {
+		if offset, ok := fileOffsets[filename]; ok {
+			bar.Set64(offset + sent)
+		}
+	}
 
 	code, err := words.Generate()
 	if err != nil {

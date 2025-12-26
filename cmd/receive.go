@@ -10,6 +10,7 @@ import (
 
 	"github.com/ebob10000/2c1f/p2p"
 	"github.com/ebob10000/2c1f/transfer"
+	"github.com/schollz/progressbar/v3"
 )
 
 // Receive starts the receiver mode
@@ -72,6 +73,32 @@ func Receive(code string) {
 	defer compressedStream.Close()
 
 	receiver := transfer.NewReceiver(destPath)
+
+	var bar *progressbar.ProgressBar
+	fileOffsets := make(map[string]int64)
+
+	receiver.OnProgress = func(filename string, received, total int64) {
+		if bar == nil {
+			if receiver.Manifest != nil {
+				var currentOffset int64
+				for _, f := range receiver.Manifest.Files {
+					fileOffsets[f.Path] = currentOffset
+					currentOffset += f.Size
+				}
+				bar = progressbar.DefaultBytes(
+					receiver.Manifest.TotalSize,
+					"receiving",
+				)
+			}
+		}
+
+		if bar != nil {
+			if offset, ok := fileOffsets[filename]; ok {
+				bar.Set64(offset + received)
+			}
+		}
+	}
+
 	if err := receiver.Receive(compressedStream); err != nil {
 		fmt.Printf("Error: Transfer failed: %v\n", err)
 		os.Exit(1)
