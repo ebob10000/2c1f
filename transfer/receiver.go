@@ -26,13 +26,44 @@ func NewReceiver(destPath string) *Receiver {
 }
 
 // Receive reads files from the stream and saves them
-func (r *Receiver) Receive(stream io.ReadWriter) error {
+func (r *Receiver) Receive(stream io.ReadWriteCloser) error {
 	// 1. Send Handshake
 	if err := WriteMessage(stream, &Message{Type: MsgHandshake, Payload: []byte(r.Code)}); err != nil {
 		return fmt.Errorf("failed to send handshake: %w", err)
 	}
 
+	// 2. Read Handshake Response (expecting Ack or Error)
 	msg, err := ReadMessage(stream)
+	if err != nil {
+		return fmt.Errorf("failed to read handshake response: %w", err)
+	}
+
+	if msg.Type == MsgError {
+		return fmt.Errorf("handshake rejected: %s", string(msg.Payload))
+	}
+
+	if msg.Type != MsgHandshakeAck {
+		return fmt.Errorf("expected handshake ack, got %d", msg.Type)
+	}
+
+	var ack HandshakeAckMsg
+	if err := json.Unmarshal(msg.Payload, &ack); err != nil {
+		return fmt.Errorf("invalid handshake ack: %w", err)
+	}
+
+	// 3. Setup Compression if needed
+	var dataStream io.ReadWriter = stream
+	if ack.Compress {
+		compressed, err := NewCompressedStream(stream)
+		if err != nil {
+			return fmt.Errorf("failed to initialize compression: %w", err)
+		}
+		defer compressed.Close()
+		dataStream = compressed
+	}
+
+	// 4. Read Manifest
+	msg, err = ReadMessage(dataStream)
 	if err != nil {
 		return fmt.Errorf("failed to read manifest: %w", err)
 	}
