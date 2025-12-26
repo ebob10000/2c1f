@@ -14,7 +14,7 @@ go install github.com/ebob10000/2c1f@latest
 ### Option 2: Build from Source
 1. Clone the repo:
    ```bash
-   git clone https://github.com/YOUR_USERNAME/2c1f.git
+   git clone https://github.com/ebob10000/2c1f.git
    cd 2c1f
    ```
 2. Build it:
