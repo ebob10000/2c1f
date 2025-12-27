@@ -2,7 +2,7 @@
 
 **2c1f** is a blazing fast, secure, and simple P2P file transfer tool for the command line. It uses a simple 6-digit code (like `123-456`) to connect two computers directly, even if they are behind different firewalls or NATs.
 
-**Version:** 1.5.6
+**Version:** 1.6.0
 
 ## Setup
 
@@ -10,8 +10,8 @@
 If you have Go installed, this is the easiest way. It compiles the app and adds it to your system path automatically.
 
 ```bash
-# Note: This requires the version tag v1.5.6 to exist on the remote repository.
-go install github.com/ebob10000/2c1f@v1.5.6
+# Note: This requires the version tag v1.6.0 to exist on the remote repository.
+go install github.com/ebob10000/2c1f@v1.6.0
 ```
 
 ### Option 2: Build from Source
