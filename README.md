@@ -10,7 +10,8 @@
 If you have Go installed, this is the easiest way. It compiles the app and adds it to your system path automatically.
 
 ```bash
-go install github.com/ebob10000/2c1f@latest
+# Note: This requires the version tag v1.5.6 to exist on the remote repository.
+go install github.com/ebob10000/2c1f@v1.5.6
 ```
 
 ### Option 2: Build from Source
@@ -34,9 +35,14 @@ You can send a single file or an entire folder.
 2c1f send ./my-folder
 ```
 
-**Send a file (no compression):**
+**Send with compression enabled:**
 ```bash
-2c1f send -no-compress my-movie.mp4
+2c1f send -compress my-large-log-file.log
+```
+
+**Send with manifest caching enabled (faster startup for large folders):**
+```bash
+2c1f send -cache-manifest ./huge-dataset
 ```
 
 Copy the generated code (e.g., `123-456`).
@@ -77,7 +83,7 @@ If you run commands without arguments, 2c1f will prompt you:
 - **Local Discovery:** Instantly finds peers on the same Wi-Fi.
 - **Resumable:** If the connection drops, just run the command again to resume.
 - **Single File Support:** Send individual files easily.
-- **Smart Options:** Disable compression for large media files.
+- **Smart Options:** Toggle compression or caching as needed.
 
 ## Tech Stack
 - **Language:** Go (Golang)
