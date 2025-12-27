@@ -2,7 +2,7 @@
 
 **2c1f** is a blazing fast, secure, and simple P2P file transfer tool for the command line. It uses a simple 6-digit code (like `123-456`) to connect two computers directly, even if they are behind different firewalls or NATs.
 
-**Version:** 1.3.1
+**Version:** 1.5.6
 
 ## Setup
 
