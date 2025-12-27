@@ -1,12 +1,14 @@
 package transfer
 
 import (
+	"compress/gzip"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
 	"os"
 	"path/filepath"
-	"compress/gzip"
 )
 
 // MessageType identifies the type of protocol message
@@ -49,10 +51,15 @@ type Manifest struct {
 
 // FileEntry describes a single file in the manifest
 type FileEntry struct {
-	Path string      `json:"path"` // Relative path within folder
-	Size int64       `json:"size"`
-	Mode os.FileMode `json:"mode"`
+	Path        string      `json:"path"` // Relative path within folder
+	Size        int64       `json:"size"`
+	Mode        os.FileMode `json:"mode"`
+	Checksum    string      `json:"checksum"`
+	BlockHashes []string    `json:"block_hashes,omitempty"`
 }
+
+const BlockSize = 1024 * 1024 // 1MB blocks
+const MaxMessageSize = 10 << 20 // 10MB limit for JSON messages
 
 // ResumeMsg contains the offsets for files that need to be resumed
 type ResumeMsg struct {
@@ -109,10 +116,23 @@ func (cs *CompressedStream) Flush() error {
 }
 
 // BuildManifest scans a folder or file and creates a manifest
-func BuildManifest(path string) (*Manifest, error) {
+func BuildManifest(path string, cache bool) (*Manifest, error) {
 	info, err := os.Stat(path)
 	if err != nil {
 		return nil, fmt.Errorf("cannot access path: %w", err)
+	}
+
+	manifestFile := filepath.Join(path, ".2c1f_manifest.json")
+	if cache && info.IsDir() {
+		if data, err := os.ReadFile(manifestFile); err == nil {
+			var cachedManifest Manifest
+			if err := json.Unmarshal(data, &cachedManifest); err == nil {
+				// Simple validation: check if total size matches (naive but fast)
+				// A more robust check would be to re-stat everything, but that defeats the purpose of caching for speed on huge folders
+				// For now, if cached manifest exists and option is enabled, we use it.
+				return &cachedManifest, nil
+			}
+		}
 	}
 
 	manifest := &Manifest{
@@ -122,10 +142,16 @@ func BuildManifest(path string) (*Manifest, error) {
 
 	if !info.IsDir() {
 		// Single file case
+		hash, blockHashes, err := calculateHashAndBlocks(path)
+		if err != nil {
+			return nil, fmt.Errorf("failed to calculate hash: %w", err)
+		}
 		manifest.Files = append(manifest.Files, FileEntry{
-			Path: filepath.Base(path),
-			Size: info.Size(),
-			Mode: info.Mode(),
+			Path:        filepath.Base(path),
+			Size:        info.Size(),
+			Mode:        info.Mode(),
+			Checksum:    hash,
+			BlockHashes: blockHashes,
 		})
 		manifest.TotalSize = info.Size()
 		return manifest, nil
@@ -139,16 +165,26 @@ func BuildManifest(path string) (*Manifest, error) {
 		if info.IsDir() {
 			return nil
 		}
+		if filepath.Base(walkPath) == ".2c1f_manifest.json" {
+			return nil
+		}
 
 		relPath, err := filepath.Rel(path, walkPath)
 		if err != nil {
 			return err
 		}
 
+		hash, blockHashes, err := calculateHashAndBlocks(walkPath)
+		if err != nil {
+			return err
+		}
+
 		manifest.Files = append(manifest.Files, FileEntry{
-			Path: filepath.ToSlash(relPath), // Use forward slashes for cross-platform
-			Size: info.Size(),
-			Mode: info.Mode(),
+			Path:        filepath.ToSlash(relPath), // Use forward slashes for cross-platform
+			Size:        info.Size(),
+			Mode:        info.Mode(),
+			Checksum:    hash,
+			BlockHashes: blockHashes,
 		})
 		manifest.TotalSize += info.Size()
 
@@ -157,6 +193,13 @@ func BuildManifest(path string) (*Manifest, error) {
 
 	if err != nil {
 		return nil, fmt.Errorf("failed to walk folder: %w", err)
+	}
+
+	if cache && info.IsDir() {
+		data, err := json.MarshalIndent(manifest, "", "  ")
+		if err == nil {
+			os.WriteFile(manifestFile, data, 0644)
+		}
 	}
 
 	return manifest, nil
@@ -202,6 +245,10 @@ func ReadMessage(r io.Reader) (*Message, error) {
 		uint32(lengthBytes[1])<<16 |
 		uint32(lengthBytes[2])<<8 |
 		uint32(lengthBytes[3])
+
+	if length > MaxMessageSize {
+		return nil, fmt.Errorf("message too large: %d > %d", length, MaxMessageSize)
+	}
 
 	data := make([]byte, length)
 	if _, err := io.ReadFull(r, data); err != nil {
@@ -273,4 +320,36 @@ func (pw *ProgressWriter) Write(p []byte) (int, error) {
 		}
 	}
 	return n, err
+}
+
+func calculateHashAndBlocks(path string) (string, []string, error) {
+	file, err := os.Open(path)
+	if err != nil {
+		return "", nil, err
+	}
+	defer file.Close()
+
+	hash := sha256.New()
+	var blockHashes []string
+	
+	buffer := make([]byte, BlockSize)
+	for {
+		n, err := file.Read(buffer)
+		if n > 0 {
+			// Update full file hash
+			hash.Write(buffer[:n])
+
+			// Calculate block hash
+			blockSum := sha256.Sum256(buffer[:n])
+			blockHashes = append(blockHashes, hex.EncodeToString(blockSum[:]))
+		}
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			return "", nil, err
+		}
+	}
+
+	return hex.EncodeToString(hash.Sum(nil)), blockHashes, nil
 }

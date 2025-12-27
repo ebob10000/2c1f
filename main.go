@@ -44,7 +44,8 @@ func printUsage() {
 	fmt.Println()
 	fmt.Println("Flags:")
 	fmt.Println("  send:")
-	fmt.Println("    -no-compress   Disable compression")
+	fmt.Println("    -compress        Enable compression")
+	fmt.Println("    -cache-manifest  Cache manifest file")
 	fmt.Println("  receive:")
 	fmt.Println("    -o <path>      Output directory")
 }

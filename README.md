@@ -2,6 +2,8 @@
 
 **2c1f** is a blazing fast, secure, and simple P2P file transfer tool for the command line. It uses a simple 6-digit code (like `123-456`) to connect two computers directly, even if they are behind different firewalls or NATs.
 
+**Version:** 1.3.1
+
 ## Setup
 
 ### Option 1: Install with Go (Recommended)
@@ -71,6 +73,7 @@ If you run commands without arguments, 2c1f will prompt you:
     - End-to-end encrypted streams.
     - **Authentication:** Receiver must provide the correct code.
     - **Confirmation:** Both Sender and Receiver must accept the connection/transfer.
+    - **Path Validation:** Prevents directory traversal attacks.
 - **Local Discovery:** Instantly finds peers on the same Wi-Fi.
 - **Resumable:** If the connection drops, just run the command again to resume.
 - **Single File Support:** Send individual files easily.

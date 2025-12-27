@@ -15,15 +15,15 @@ const ChunkSize = 64 * 1024 // 64KB chunks
 type Sender struct {
 	FolderPath  string
 	Code        string
-	NoCompress  bool
+	Compress    bool
 	Manifest    *Manifest
 	OnStartFile func(filename string, index, total int)
 	OnProgress  func(filename string, sent, total int64)
 }
 
 // NewSender creates a new sender for the given folder
-func NewSender(folderPath string) (*Sender, error) {
-	manifest, err := BuildManifest(folderPath)
+func NewSender(folderPath string, cacheManifest bool) (*Sender, error) {
+	manifest, err := BuildManifest(folderPath, cacheManifest)
 	if err != nil {
 		return nil, err
 	}
@@ -31,6 +31,7 @@ func NewSender(folderPath string) (*Sender, error) {
 	return &Sender{
 		FolderPath: folderPath,
 		Manifest:   manifest,
+		Compress:   false, // Default to false
 	}, nil
 }
 
@@ -63,7 +64,7 @@ func (s *Sender) Handshake(stream io.ReadWriter) error {
 
 	// 2. Send HandshakeAck with options
 	ack := HandshakeAckMsg{
-		Compress: !s.NoCompress,
+		Compress: s.Compress,
 	}
 	ackData, _ := json.Marshal(ack)
 	if err := WriteMessage(stream, &Message{Type: MsgHandshakeAck, Payload: ackData}); err != nil {
@@ -75,11 +76,6 @@ func (s *Sender) Handshake(stream io.ReadWriter) error {
 
 // Send transfers all files over the stream
 func (s *Sender) Send(stream io.ReadWriter) error {
-	fmt.Printf("Sending manifest: %s (%d files, %s)\n",
-		s.Manifest.FolderName,
-		len(s.Manifest.Files),
-		FormatBytes(s.Manifest.TotalSize))
-
 	if err := SendManifest(stream, s.Manifest); err != nil {
 		return fmt.Errorf("failed to send manifest: %w", err)
 	}
@@ -120,12 +116,10 @@ func (s *Sender) Send(stream io.ReadWriter) error {
 		return fmt.Errorf("failed to send completion: %w", err)
 	}
 
-	fmt.Println("Waiting for receiver to finish...")
 	// Wait for the receiver to process the completion message and close the stream.
 	// This ensures the connection isn't torn down while data is still buffered.
 	io.ReadAll(stream)
 
-	fmt.Println("Transfer complete!")
 	return nil
 }
 

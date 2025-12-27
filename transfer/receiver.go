@@ -1,11 +1,14 @@
 package transfer
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
 	"os"
 	"path/filepath"
+	"strings"
 )
 
 // Receiver handles receiving files from a peer
@@ -86,6 +89,9 @@ func (r *Receiver) Receive(stream io.ReadWriteCloser) error {
 	}
 
 	destFolder := filepath.Join(r.DestPath, manifest.FolderName)
+	if !strings.HasPrefix(destFolder, filepath.Clean(r.DestPath)) {
+		return fmt.Errorf("invalid folder name: %s", manifest.FolderName)
+	}
 	
 	// Calculate resume offsets
 	resumeOffsets := make(map[string]int64)
@@ -93,25 +99,15 @@ func (r *Receiver) Receive(stream io.ReadWriteCloser) error {
 
 	for _, file := range manifest.Files {
 		localPath := filepath.Join(destFolder, filepath.FromSlash(file.Path))
-		info, err := os.Stat(localPath)
-		if err == nil && !info.IsDir() {
-			if info.Size() < file.Size {
-				resumeOffsets[file.Path] = info.Size()
-				existingSize += info.Size()
-			} else if info.Size() == file.Size {
-				resumeOffsets[file.Path] = info.Size()
-				existingSize += info.Size()
-			}
+		if !strings.HasPrefix(localPath, filepath.Clean(destFolder)) {
+			// Skip invalid paths or return error? Return error is safer.
+			return fmt.Errorf("invalid file path in manifest: %s", file.Path)
 		}
-	}
-
-	fmt.Printf("Receiving: %s (%d files, %s)\n",
-		manifest.FolderName,
-		len(manifest.Files),
-		FormatBytes(manifest.TotalSize))
-	
-	if existingSize > 0 {
-		fmt.Printf("Resuming transfer... found %s existing data\n", FormatBytes(existingSize))
+		offset, _ := verifyLocalFile(localPath, file)
+		if offset > 0 {
+			resumeOffsets[file.Path] = offset
+			existingSize += offset
+		}
 	}
 
 	if err := os.MkdirAll(destFolder, 0755); err != nil {
@@ -143,7 +139,6 @@ func (r *Receiver) Receive(stream io.ReadWriteCloser) error {
 			}
 
 		case MsgComplete:
-			fmt.Println("Transfer complete!")
 			return nil
 
 		case MsgError:
@@ -155,10 +150,74 @@ func (r *Receiver) Receive(stream io.ReadWriteCloser) error {
 	}
 }
 
+func verifyLocalFile(path string, entry FileEntry) (int64, error) {
+	info, err := os.Stat(path)
+	if err != nil {
+		return 0, err
+	}
+
+	// If no block hashes, fallback to simple size check
+	if len(entry.BlockHashes) == 0 {
+		if info.Size() > entry.Size {
+			return 0, nil // Local file is larger, treat as invalid
+		}
+		return info.Size(), nil
+	}
+
+	f, err := os.Open(path)
+	if err != nil {
+		return 0, err
+	}
+	defer f.Close()
+
+	buf := make([]byte, BlockSize)
+	var validatedOffset int64
+
+	for _, expectedHash := range entry.BlockHashes {
+		n, err := io.ReadFull(f, buf)
+		if err == io.EOF {
+			break
+		}
+		if err == io.ErrUnexpectedEOF {
+			// Partial read at the end of file
+			if n > 0 {
+				hash := sha256.Sum256(buf[:n])
+				if hex.EncodeToString(hash[:]) == expectedHash {
+					validatedOffset += int64(n)
+				}
+			}
+			break
+		}
+		if err != nil {
+			break
+		}
+
+		// Full block read
+		hash := sha256.Sum256(buf[:n])
+		if hex.EncodeToString(hash[:]) == expectedHash {
+			validatedOffset += int64(n)
+		} else {
+			// Mismatch found, stop verification
+			break
+		}
+	}
+
+	return validatedOffset, nil
+}
+
 func (r *Receiver) receiveFile(stream io.Reader, startMsg *Message, destFolder string, current, total int) error {
 	var fileStart FileStartMsg
 	if err := json.Unmarshal(startMsg.Payload, &fileStart); err != nil {
 		return err
+	}
+
+	// Find entry for checksum
+	var entry *FileEntry
+	for i := range r.Manifest.Files {
+		if r.Manifest.Files[i].Path == fileStart.Path {
+			entry = &r.Manifest.Files[i]
+			break
+		}
 	}
 
 	if r.OnStartFile != nil {
@@ -175,13 +234,33 @@ func (r *Receiver) receiveFile(stream io.Reader, startMsg *Message, destFolder s
 		if endMsg.Type != MsgFileEnd {
 			return fmt.Errorf("expected file end message, got %d", endMsg.Type)
 		}
+		// TODO: verify checksum of existing file? For now assuming it's correct if size matches.
 		return nil
 	}
 
 	filePath := filepath.Join(destFolder, filepath.FromSlash(fileStart.Path))
+	if !strings.HasPrefix(filePath, filepath.Clean(destFolder)) {
+		return fmt.Errorf("invalid file path: %s", fileStart.Path)
+	}
 
 	if err := os.MkdirAll(filepath.Dir(filePath), 0755); err != nil {
 		return err
+	}
+
+	hasher := sha256.New()
+
+	// Handle existing content for hash
+	if fileStart.Offset > 0 {
+		f, err := os.Open(filePath)
+		if err != nil {
+			return fmt.Errorf("failed to open existing file for hashing: %w", err)
+		}
+		// Read only up to offset
+		if _, err := io.CopyN(hasher, f, fileStart.Offset); err != nil {
+			f.Close()
+			return fmt.Errorf("failed to hash existing content: %w", err)
+		}
+		f.Close()
 	}
 
 	// Open file in append mode if resuming, create/truncate otherwise
@@ -207,8 +286,6 @@ func (r *Receiver) receiveFile(stream io.Reader, startMsg *Message, destFolder s
 		if pos != fileStart.Offset {
 			// This shouldn't happen if we calculated offsets correctly based on local files,
 			// but if the file changed between manifest and now, it's safer to truncate.
-			// However, simplified logic: just error out or warn.
-			// Let's truncate to the expected offset to be safe
 			if err := file.Truncate(fileStart.Offset); err != nil {
 				return err
 			}
@@ -218,8 +295,11 @@ func (r *Receiver) receiveFile(stream io.Reader, startMsg *Message, destFolder s
 	remaining := fileStart.Size - fileStart.Offset
 
 	// We use io.CopyN to read exactly the expected number of bytes
+	// Wrap file with MultiWriter to calculate hash while writing
+	multiWriter := io.MultiWriter(file, hasher)
+
 	writer := &ProgressWriter{
-		Writer: file,
+		Writer: multiWriter,
 		Total:  fileStart.Size,
 		Current: fileStart.Offset,
 		OnProgress: func(current, total int64) {
@@ -244,6 +324,14 @@ func (r *Receiver) receiveFile(stream io.Reader, startMsg *Message, destFolder s
 	}
 	if endMsg.Type != MsgFileEnd {
 		return fmt.Errorf("expected file end message, got %d", endMsg.Type)
+	}
+
+	// Validate Checksum
+	if entry != nil && entry.Checksum != "" {
+		actualHash := hex.EncodeToString(hasher.Sum(nil))
+		if actualHash != entry.Checksum {
+			return fmt.Errorf("checksum mismatch for %s: expected %s, got %s", fileStart.Path, entry.Checksum, actualHash)
+		}
 	}
 
 	return nil

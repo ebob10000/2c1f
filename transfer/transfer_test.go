@@ -30,41 +30,55 @@ func TestTransfer(t *testing.T) {
 	// Setup destination folder
 	destDir := t.TempDir()
 
-	// Create pipe to simulate network connection
-	p1, p2 := net.Pipe()
+	// Use TCP listener instead of net.Pipe to avoid deadlock with synchronous gzip header exchange
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ln.Close()
 
-	// Run Receiver in a goroutine
 	errChan := make(chan error, 1)
+
+	// Run Receiver
 	go func() {
-		defer p1.Close()
+		conn, err := ln.Accept()
+		if err != nil {
+			errChan <- err
+			return
+		}
+		defer conn.Close()
+
 		receiver := NewReceiver(destDir)
 		receiver.Code = "123-456" // Set a code for handshake
-		err := receiver.Receive(p1)
-		errChan <- err
+		errChan <- receiver.Receive(conn)
 	}()
 
 	// Run Sender
 	go func() {
-		defer p2.Close()
-		sender, err := NewSender(srcDir)
+		conn, err := net.Dial("tcp", ln.Addr().String())
+		if err != nil {
+			t.Errorf("Failed to connect: %v", err)
+			return
+		}
+		defer conn.Close()
+
+		sender, err := NewSender(srcDir, false)
 		if err != nil {
 			t.Errorf("Failed to create sender: %v", err)
 			return
 		}
 		sender.Code = "123-456" // Match the code
-		// Compression is enabled by default
+		sender.Compress = true  // Enable compression for test
 
-		if err := sender.Handshake(p2); err != nil {
+		if err := sender.Handshake(conn); err != nil {
 			t.Errorf("Sender handshake failed: %v", err)
 			return
 		}
 
-		// Wrap stream if compression is enabled (default)
-		var dataStream io.ReadWriter = p2
-		// Wait, io.ReadWriter is interface.
-		// We need to implement the wrapping logic here
-		if !sender.NoCompress {
-			compressed, err := NewCompressedStream(p2)
+		// Wrap stream if compression is enabled
+		var dataStream io.ReadWriter = conn
+		if sender.Compress {
+			compressed, err := NewCompressedStream(conn)
 			if err != nil {
 				t.Errorf("Failed to create compressed stream: %v", err)
 				return
@@ -86,7 +100,7 @@ func TestTransfer(t *testing.T) {
 
 	// Verify files
 	for path, content := range files {
-		// Note: Receiver creates a subfolder with the source folder name
+		// Receiver creates a subfolder with the source folder name
 		fullPath := filepath.Join(destDir, filepath.Base(srcDir), path)
 		data, err := os.ReadFile(fullPath)
 		if err != nil {
@@ -116,37 +130,53 @@ func TestTransferSingleFile(t *testing.T) {
 	// Setup destination folder
 	destDir := t.TempDir()
 
-	// Create pipe to simulate network connection
-	p1, p2 := net.Pipe()
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ln.Close()
 
-	// Run Receiver in a goroutine
 	errChan := make(chan error, 1)
+
+	// Run Receiver
 	go func() {
-		defer p1.Close()
+		conn, err := ln.Accept()
+		if err != nil {
+			errChan <- err
+			return
+		}
+		defer conn.Close()
+
 		receiver := NewReceiver(destDir)
 		receiver.Code = "123-456"
-		err := receiver.Receive(p1)
-		errChan <- err
+		errChan <- receiver.Receive(conn)
 	}()
 
 	// Run Sender
 	go func() {
-		defer p2.Close()
-		sender, err := NewSender(srcPath) // Pass file path directly
+		conn, err := net.Dial("tcp", ln.Addr().String())
+		if err != nil {
+			t.Errorf("Failed to connect: %v", err)
+			return
+		}
+		defer conn.Close()
+
+		sender, err := NewSender(srcPath, false) // Pass file path directly
 		if err != nil {
 			t.Errorf("Failed to create sender: %v", err)
 			return
 		}
 		sender.Code = "123-456"
+		sender.Compress = true // Enable compression
 
-		if err := sender.Handshake(p2); err != nil {
+		if err := sender.Handshake(conn); err != nil {
 			t.Errorf("Sender handshake failed: %v", err)
 			return
 		}
 
-		var dataStream io.ReadWriter = p2
-		if !sender.NoCompress {
-			compressed, err := NewCompressedStream(p2)
+		var dataStream io.ReadWriter = conn
+		if sender.Compress {
+			compressed, err := NewCompressedStream(conn)
 			if err != nil {
 				t.Errorf("Failed to create compressed stream: %v", err)
 				return
@@ -166,20 +196,6 @@ func TestTransferSingleFile(t *testing.T) {
 		t.Fatalf("Receiver failed: %v", err)
 	}
 
-	// Verify file
-	// Receiver creates a folder named after the file (or parent folder? let's check manifest)
-	// BuildManifest for file uses filepath.Base(path) as FolderName.
-	// So dest will be destDir/single.txt/single.txt ?
-	// No, Wait. Manifest.FolderName is Base(path).
-	// If path is /tmp/single.txt, FolderName is single.txt.
-	// FileEntry path is single.txt.
-	// Receiver joins DestPath + Manifest.FolderName + FileEntry.Path
-	// -> destDir/single.txt/single.txt
-	
-	// Let's verify this behavior is what we want.
-	// Usually for single file, we might want it directly in DestDir?
-	// But current logic enforces a folder structure.
-	
 	fullPath := filepath.Join(destDir, fileName, fileName)
 	data, err := os.ReadFile(fullPath)
 	if err != nil {

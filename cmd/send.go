@@ -20,7 +20,8 @@ import (
 // Send starts the sender mode
 func Send(args []string) {
 	fs := flag.NewFlagSet("send", flag.ExitOnError)
-	noCompress := fs.Bool("no-compress", false, "Disable compression")
+	compress := fs.Bool("compress", false, "Enable compression")
+	cacheManifest := fs.Bool("cache-manifest", false, "Cache manifest file")
 	fs.Parse(args)
 
 	folderPath := fs.Arg(0)
@@ -40,12 +41,12 @@ func Send(args []string) {
 	}
 	// Removed IsDir check to allow single files
 
-	sender, err := transfer.NewSender(folderPath)
+	sender, err := transfer.NewSender(folderPath, *cacheManifest)
 	if err != nil {
 		fmt.Printf("Error: Failed to scan path: %v\n", err)
 		os.Exit(1)
 	}
-	sender.NoCompress = *noCompress
+	sender.Compress = *compress
 
 	fmt.Printf("Sending: %s (%d files)\n", sender.Manifest.FolderName, len(sender.Manifest.Files))
 
@@ -154,7 +155,7 @@ func Send(args []string) {
 		}
 
 		var dataStream io.ReadWriter = stream
-		if !sender.NoCompress {
+		if sender.Compress {
 			compressedStream, err := transfer.NewCompressedStream(stream)
 			if err != nil {
 				fmt.Printf("Failed to initialize compression: %v\n", err)
@@ -197,6 +198,7 @@ func Send(args []string) {
 			fmt.Printf("Transfer failed: %v\n", err)
 			os.Exit(1)
 		}
+		fmt.Println("Transfer complete!")
 	case <-ctx.Done():
 		fmt.Println("Cancelled.")
 	}

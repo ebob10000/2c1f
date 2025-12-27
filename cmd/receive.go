@@ -93,6 +93,23 @@ func Receive(args []string) {
 		fmt.Printf("  Name: %s\n", m.FolderName)
 		fmt.Printf("  Size: %s\n", transfer.FormatBytes(m.TotalSize)) // Ensure FormatBytes is public or copy logic
 		fmt.Printf("  Files: %d\n", len(m.Files))
+
+		// Check for existing files
+		var existingSize int64
+		destFolder := filepath.Join(destPath, m.FolderName)
+		for _, file := range m.Files {
+			localPath := filepath.Join(destFolder, filepath.FromSlash(file.Path))
+			info, err := os.Stat(localPath)
+			if err == nil && !info.IsDir() {
+				if info.Size() <= file.Size {
+					existingSize += info.Size()
+				}
+			}
+		}
+
+		if existingSize > 0 {
+			fmt.Printf("  Resuming: found %s existing data\n", transfer.FormatBytes(existingSize))
+		}
 		
 		fmt.Print("Accept? [y/N]: ")
 		var response string
