@@ -10,8 +10,7 @@
 If you have Go installed, this is the easiest way. It compiles the app and adds it to your system path automatically.
 
 ```bash
-# Note: This requires the version tag v1.6.0 to exist on the remote repository.
-go install github.com/ebob10000/2c1f@v1.6.0
+go install github.com/ebob10000/2c1f@latest
 ```
 
 ### Option 2: Build from Source
