@@ -108,22 +108,31 @@ func (cs *CompressedStream) Flush() error {
 	return cs.w.Flush()
 }
 
-// BuildManifest scans a folder and creates a manifest
-func BuildManifest(folderPath string) (*Manifest, error) {
-	info, err := os.Stat(folderPath)
+// BuildManifest scans a folder or file and creates a manifest
+func BuildManifest(path string) (*Manifest, error) {
+	info, err := os.Stat(path)
 	if err != nil {
-		return nil, fmt.Errorf("cannot access folder: %w", err)
-	}
-	if !info.IsDir() {
-		return nil, fmt.Errorf("path is not a directory: %s", folderPath)
+		return nil, fmt.Errorf("cannot access path: %w", err)
 	}
 
 	manifest := &Manifest{
-		FolderName: filepath.Base(folderPath),
+		FolderName: filepath.Base(path),
 		Files:      []FileEntry{},
 	}
 
-	err = filepath.Walk(folderPath, func(path string, info os.FileInfo, err error) error {
+	if !info.IsDir() {
+		// Single file case
+		manifest.Files = append(manifest.Files, FileEntry{
+			Path: filepath.Base(path),
+			Size: info.Size(),
+			Mode: info.Mode(),
+		})
+		manifest.TotalSize = info.Size()
+		return manifest, nil
+	}
+
+	// Directory case
+	err = filepath.Walk(path, func(walkPath string, info os.FileInfo, err error) error {
 		if err != nil {
 			return err
 		}
@@ -131,7 +140,7 @@ func BuildManifest(folderPath string) (*Manifest, error) {
 			return nil
 		}
 
-		relPath, err := filepath.Rel(folderPath, path)
+		relPath, err := filepath.Rel(path, walkPath)
 		if err != nil {
 			return err
 		}

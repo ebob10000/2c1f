@@ -142,7 +142,16 @@ func (s *Sender) sendFile(stream io.ReadWriter, entry FileEntry, offset int64) e
 		return WriteMessage(stream, &Message{Type: MsgFileEnd})
 	}
 
-	filePath := filepath.Join(s.FolderPath, filepath.FromSlash(entry.Path))
+	// Determine actual file path on disk
+	var filePath string
+	info, err := os.Stat(s.FolderPath)
+	if err == nil && !info.IsDir() {
+		// Single file mode: s.FolderPath is the file itself
+		filePath = s.FolderPath
+	} else {
+		// Directory mode: Join folder path with relative file path
+		filePath = filepath.Join(s.FolderPath, filepath.FromSlash(entry.Path))
+	}
 
 	file, err := os.Open(filePath)
 	if err != nil {
