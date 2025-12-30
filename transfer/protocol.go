@@ -348,8 +348,12 @@ func BuildManifest(path string, cache bool, skipHash bool, onProgress ManifestPr
 
 	if cache && info.IsDir() && !skipHash {
 		data, err := json.MarshalIndent(manifest, "", "  ")
-		if err == nil {
-			os.WriteFile(manifestFile, data, 0600)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Warning: failed to marshal manifest cache: %v\n", err)
+		} else {
+			if err := os.WriteFile(manifestFile, data, 0600); err != nil {
+				fmt.Fprintf(os.Stderr, "Warning: failed to write manifest cache: %v\n", err)
+			}
 		}
 	}
 

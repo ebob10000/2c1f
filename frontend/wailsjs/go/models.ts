@@ -1,21 +1,5 @@
 export namespace main {
 	
-	export class AppSettings {
-	    autoHash: boolean;
-	    compress: boolean;
-	    cacheManifest: boolean;
-	
-	    static createFrom(source: any = {}) {
-	        return new AppSettings(source);
-	    }
-	
-	    constructor(source: any = {}) {
-	        if ('string' === typeof source) source = JSON.parse(source);
-	        this.autoHash = source["autoHash"];
-	        this.compress = source["compress"];
-	        this.cacheManifest = source["cacheManifest"];
-	    }
-	}
 	export class TransferRecord {
 	    // Go type: time
 	    timestamp: any;
@@ -56,6 +40,27 @@ export namespace main {
 		    }
 		    return a;
 		}
+	}
+
+}
+
+export namespace settings {
+	
+	export class AppSettings {
+	    autoHash: boolean;
+	    compress: boolean;
+	    cacheManifest: boolean;
+	
+	    static createFrom(source: any = {}) {
+	        return new AppSettings(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.autoHash = source["autoHash"];
+	        this.compress = source["compress"];
+	        this.cacheManifest = source["cacheManifest"];
+	    }
 	}
 
 }

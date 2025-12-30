@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -87,7 +88,11 @@ func (r *Receiver) Receive(stream io.ReadWriteCloser) error {
 	}
 
 	destFolder := filepath.Join(r.DestPath, manifest.FolderName)
-	if !strings.HasPrefix(destFolder, filepath.Clean(r.DestPath)) {
+	cleanDestPath := filepath.Clean(r.DestPath)
+	cleanDestFolder := filepath.Clean(destFolder)
+
+	// Validate destination folder is within allowed path
+	if !strings.HasPrefix(cleanDestFolder+string(os.PathSeparator), cleanDestPath+string(os.PathSeparator)) {
 		return fmt.Errorf("invalid folder name: %s", manifest.FolderName)
 	}
 
@@ -96,9 +101,12 @@ func (r *Receiver) Receive(stream io.ReadWriteCloser) error {
 
 	for _, file := range manifest.Files {
 		localPath := filepath.Join(destFolder, filepath.FromSlash(file.Path))
-		if !strings.HasPrefix(localPath, filepath.Clean(destFolder)) {
-			return fmt.Errorf("invalid file path in manifest: %s", file.Path)
+
+		// Validate path before checking if file exists
+		if err := validatePath(localPath, destFolder); err != nil {
+			return fmt.Errorf("invalid file path in manifest: %s: %w", file.Path, err)
 		}
+
 		offset, _ := r.verifyLocalFile(localPath, file)
 		if offset > 0 {
 			resumeOffsets[file.Path] = offset
@@ -245,11 +253,10 @@ func (r *Receiver) receiveFile(stream io.Reader, startMsg *Message, destFolder s
 	}
 
 	filePath := filepath.Join(destFolder, filepath.FromSlash(fileStart.Path))
-	cleanDest := filepath.Clean(destFolder)
-	cleanPath := filepath.Clean(filePath)
 
-	if !strings.HasPrefix(cleanPath, cleanDest+string(os.PathSeparator)) {
-		return fmt.Errorf("invalid file path (Zip Slip detected): %s", fileStart.Path)
+	// Validate path to prevent directory traversal and symlink attacks
+	if err := validatePath(filePath, destFolder); err != nil {
+		return fmt.Errorf("invalid file path (directory traversal detected): %s: %w", fileStart.Path, err)
 	}
 
 	if err := os.MkdirAll(filepath.Dir(filePath), 0755); err != nil {
@@ -278,7 +285,10 @@ func (r *Receiver) receiveFile(stream io.Reader, startMsg *Message, destFolder s
 		flags |= os.O_TRUNC
 	}
 
-	file, err := os.OpenFile(filePath, flags, 0644)
+	// Create file with restrictive permissions (owner read/write only)
+	// On Windows, the permission bits are ignored, but on Unix this prevents
+	// other users from reading the received files
+	file, err := os.OpenFile(filePath, flags, 0600)
 	if err != nil {
 		return fmt.Errorf("failed to open file %s: %w", filePath, err)
 	}
@@ -353,11 +363,92 @@ func (r *Receiver) receiveFile(stream io.Reader, startMsg *Message, destFolder s
 		return fmt.Errorf("expected file end message, got %d", endMsg.Type)
 	}
 
-	if entry != nil && entry.Checksum != "" {
-		actualHash := hex.EncodeToString(hasher.Sum(nil))
-		if actualHash != entry.Checksum {
-			return fmt.Errorf("checksum mismatch for %s: expected %s, got %s", fileStart.Path, entry.Checksum, actualHash)
+	// Verify checksum if available
+	if entry != nil {
+		if entry.Checksum == "" {
+			// Warn if checksum is missing - this could indicate an integrity issue
+			fmt.Fprintf(os.Stderr, "Warning: no checksum available for %s, cannot verify integrity\n", fileStart.Path)
+		} else {
+			actualHash := hex.EncodeToString(hasher.Sum(nil))
+			if actualHash != entry.Checksum {
+				return fmt.Errorf("checksum mismatch for %s: expected %s, got %s", fileStart.Path, entry.Checksum, actualHash)
+			}
 		}
+	}
+
+	return nil
+}
+
+// validatePath checks if a file path is safe and within the allowed base directory
+// It protects against both path traversal and symlink attacks
+func validatePath(path, baseDir string) error {
+	// Clean both paths to normalize them
+	cleanPath := filepath.Clean(path)
+	cleanBase := filepath.Clean(baseDir)
+
+	// Ensure base ends with separator for proper prefix checking
+	if !strings.HasSuffix(cleanBase, string(os.PathSeparator)) {
+		cleanBase += string(os.PathSeparator)
+	}
+
+	// First check: simple prefix check
+	// Either path equals base (without separator) OR path starts with base (with separator)
+	pathWithSep := cleanPath
+	if !strings.HasSuffix(pathWithSep, string(os.PathSeparator)) {
+		pathWithSep += string(os.PathSeparator)
+	}
+
+	if !strings.HasPrefix(pathWithSep, cleanBase) && cleanPath != filepath.Clean(baseDir) {
+		return errors.New("path traversal detected")
+	}
+
+	// If file/directory exists, resolve symlinks and check again
+	resolvedPath, err := filepath.EvalSymlinks(path)
+	if err != nil {
+		// If file doesn't exist yet, check parent directory
+		if os.IsNotExist(err) {
+			parentDir := filepath.Dir(path)
+			if parentDir != path && parentDir != "." && parentDir != baseDir {
+				// Recursively check parent
+				return validatePath(parentDir, baseDir)
+			}
+			// Parent is base dir or at root - rely on simple check
+			return nil
+		}
+		// Other errors (permission denied, etc.) - be permissive if file doesn't exist
+		if os.IsPermission(err) {
+			return nil
+		}
+		return fmt.Errorf("failed to validate path: %w", err)
+	}
+
+	// Resolve base directory symlinks too
+	resolvedBase, err := filepath.EvalSymlinks(baseDir)
+	if err != nil {
+		if os.IsNotExist(err) {
+			// Base directory doesn't exist yet, use cleaned version
+			resolvedBase = filepath.Clean(baseDir)
+		} else if !os.IsPermission(err) {
+			return fmt.Errorf("failed to resolve base directory: %w", err)
+		} else {
+			resolvedBase = filepath.Clean(baseDir)
+		}
+	}
+
+	// Ensure resolved base has separator
+	if !strings.HasSuffix(resolvedBase, string(os.PathSeparator)) {
+		resolvedBase += string(os.PathSeparator)
+	}
+
+	// Add separator to resolved path for checking
+	resolvedPathWithSep := resolvedPath
+	if !strings.HasSuffix(resolvedPathWithSep, string(os.PathSeparator)) {
+		resolvedPathWithSep += string(os.PathSeparator)
+	}
+
+	// Check resolved paths
+	if !strings.HasPrefix(resolvedPathWithSep, resolvedBase) && resolvedPath != filepath.Clean(baseDir) {
+		return errors.New("symlink attack detected: resolved path outside base directory")
 	}
 
 	return nil

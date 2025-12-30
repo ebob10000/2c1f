@@ -61,7 +61,10 @@ func (s *Sender) Handshake(stream io.ReadWriter) error {
 	}
 
 	ack := HandshakeAckMsg{Compress: s.Compress}
-	ackData, _ := json.Marshal(ack)
+	ackData, err := json.Marshal(ack)
+	if err != nil {
+		return fmt.Errorf("failed to marshal handshake ack: %w", err)
+	}
 	if err := WriteMessage(stream, &Message{Type: MsgHandshakeAck, Payload: ackData}); err != nil {
 		return fmt.Errorf("failed to send handshake ack: %w", err)
 	}
@@ -123,7 +126,9 @@ func (s *Sender) Send(stream io.ReadWriter) error {
 
 	buf := make([]byte, 1)
 	if _, readErr := stream.Read(buf); readErr != nil && readErr != io.EOF {
-		fmt.Fprintf(os.Stderr, "Warning: error waiting for receiver acknowledgment: %v\n", readErr)
+		// This is just a courtesy wait for receiver acknowledgment
+		// Log the warning but don't fail the transfer since data was already sent
+		fmt.Fprintf(os.Stderr, "Warning: receiver may not have acknowledged file completion: %v\n", readErr)
 	}
 
 	return nil
@@ -131,7 +136,10 @@ func (s *Sender) Send(stream io.ReadWriter) error {
 
 func (s *Sender) sendFile(stream io.Writer, entry FileEntry, offset int64) error {
 	startMsg := FileStartMsg{Path: entry.Path, Size: entry.Size, Offset: offset}
-	startData, _ := json.Marshal(startMsg)
+	startData, err := json.Marshal(startMsg)
+	if err != nil {
+		return fmt.Errorf("failed to marshal file start message: %w", err)
+	}
 	if err := WriteMessage(stream, &Message{Type: MsgFileStart, Payload: startData}); err != nil {
 		return err
 	}

@@ -18,12 +18,20 @@ export function CopyToClipboard(arg1) {
   return window['go']['main']['App']['CopyToClipboard'](arg1);
 }
 
+export function DownloadAndInstallUpdate(arg1) {
+  return window['go']['main']['App']['DownloadAndInstallUpdate'](arg1);
+}
+
 export function GetSettings() {
   return window['go']['main']['App']['GetSettings']();
 }
 
 export function GetTransferHistory() {
   return window['go']['main']['App']['GetTransferHistory']();
+}
+
+export function GetVersion() {
+  return window['go']['main']['App']['GetVersion']();
 }
 
 export function IsPaused() {

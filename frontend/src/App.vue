@@ -1,10 +1,17 @@
 <script setup>
 import {ref, onMounted, computed, reactive, nextTick} from 'vue'
-import {SelectFile, SelectFolder, SelectSaveDirectory, StartSender, StartReceiver, GetSettings, SaveSettings, CancelTransfer, CopyToClipboard, GetTransferHistory} from '../wailsjs/go/main/App'
+import {SelectFile, SelectFolder, SelectSaveDirectory, StartSender, StartReceiver, GetSettings, SaveSettings, CancelTransfer, CopyToClipboard, GetTransferHistory, GetVersion, DownloadAndInstallUpdate} from '../wailsjs/go/main/App'
 import {EventsOn, WindowMinimise, WindowToggleMaximise, Quit} from '../wailsjs/runtime'
 
-const mode = ref('send') 
+const mode = ref('send')
 const errorMsg = ref('')
+
+// Update notification state
+const updateAvailable = ref(null)
+const updateDownloading = ref(false)
+const updateProgress = ref(0)
+const updateDismissed = ref(false)
+const appVersion = ref('')
 
 // Global Settings
 const settings = reactive({
@@ -16,6 +23,9 @@ const settings = reactive({
 // Console Logs
 const consoleLogs = ref([])
 const logContainer = ref(null)
+const consoleCollapsed = ref(true)
+const consolePanelHeight = ref(240)
+const isResizing = ref(false)
 
 function addLog(msg, type = 'info') {
   // Filter out unnecessary system logs
@@ -272,6 +282,30 @@ onMounted(() => {
       mode.value = 'send'
     }
   })
+
+  // Auto-update events
+  EventsOn("update_available", (data) => {
+    updateAvailable.value = data
+    updateDismissed.value = false
+    addLog(`Update available: v${data.version}`, 'info')
+  })
+
+  EventsOn("update_download_progress", (data) => {
+    updateProgress.value = data.percent
+  })
+
+  EventsOn("update_ready", (data) => {
+    addLog(`Update v${data.version} ready. Restarting...`, 'success')
+    // App will restart automatically
+  })
+
+  EventsOn("update_error", (data) => {
+    addLog(`Update error: ${data.error}`, 'error')
+    updateDownloading.value = false
+  })
+
+  // Load app version
+  GetVersion().then(v => appVersion.value = v)
 })
 
 async function pickFile() { 
@@ -282,9 +316,19 @@ async function pickFolder() {
   const path = await SelectFolder(); 
   if (path) { sendPath.value = path; addLog(`Selected folder: ${path}`, 'info') }
 }
-async function pickDest() { 
-  const path = await SelectSaveDirectory(); 
+async function pickDest() {
+  const path = await SelectSaveDirectory();
   if (path) { destPath.value = path; addLog(`Selected destination: ${path}`, 'info') }
+}
+
+function downloadUpdate() {
+  updateDownloading.value = true
+  updateProgress.value = 0
+  DownloadAndInstallUpdate(updateAvailable.value.version)
+    .catch(err => {
+      addLog(`Failed to install update: ${err}`, 'error')
+      updateDownloading.value = false
+    })
 }
 
 async function startSend() {
@@ -366,6 +410,29 @@ const IconRecv = `<svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="
 const IconHistory = `<svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14" stroke-linecap="round" stroke-linejoin="round"/></svg>`
 const IconSettings = `<svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.1a2 2 0 0 1-1-1.72v-.51a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"/><circle cx="12" cy="12" r="3"/></svg>`
 const IconCopy = `<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>`
+
+// Console panel resize functionality
+function startResize(e) {
+  isResizing.value = true
+  const startY = e.clientY
+  const startHeight = consolePanelHeight.value
+
+  function onMouseMove(e) {
+    if (!isResizing.value) return
+    const delta = startY - e.clientY
+    const newHeight = Math.max(100, Math.min(600, startHeight + delta))
+    consolePanelHeight.value = newHeight
+  }
+
+  function onMouseUp() {
+    isResizing.value = false
+    document.removeEventListener('mousemove', onMouseMove)
+    document.removeEventListener('mouseup', onMouseUp)
+  }
+
+  document.addEventListener('mousemove', onMouseMove)
+  document.addEventListener('mouseup', onMouseUp)
+}
 
 </script>
 
@@ -669,24 +736,271 @@ const IconCopy = `<svg width="16" height="16" viewBox="0 0 24 24" fill="none" st
            </div>
         </div>
 
-        <!-- CONSOLE LOG -->
-        <div style="margin-top: 24px;">
-           <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
-              <div style="font-size: 12px; font-weight: 600; color: var(--text-secondary); text-transform: uppercase; letter-spacing: 0.5px;">Network Activity</div>
-              <div v-if="consoleLogs.length > 0" style="font-size: 11px; color: var(--text-secondary);">{{ consoleLogs.length }} event{{ consoleLogs.length !== 1 ? 's' : '' }}</div>
-           </div>
-           <div class="console-box" ref="logContainer">
-              <div v-if="consoleLogs.length === 0" style="color: #666; text-align: center; padding: 20px;">
-                 No network activity yet...
-              </div>
-              <div v-for="(log, i) in consoleLogs" :key="i" class="log-entry">
-                 <div class="log-time">[{{ log.time }}]</div>
-                 <div class="log-msg" :class="log.type">{{ log.msg }}</div>
-              </div>
-           </div>
-        </div>
-
       </div>
     </main>
+
+    <!-- Update Notification (bottom-right corner) -->
+    <div v-if="updateAvailable && !updateDismissed" class="update-notification">
+      <div class="update-header">
+        <span class="update-title">Update Available: v{{ updateAvailable.version }}</span>
+        <button @click="updateDismissed = true" class="dismiss-btn" title="Dismiss">×</button>
+      </div>
+      <div class="update-body">
+        <p>A new version of 2c1f is available.</p>
+        <button
+          v-if="!updateDownloading"
+          @click="downloadUpdate"
+          class="btn btn-primary btn-sm">
+          Download Now
+        </button>
+        <div v-else class="update-progress">
+          <div class="progress-bar-thin">
+            <div class="progress-fill" :style="{width: updateProgress + '%'}"></div>
+          </div>
+          <span class="progress-text">{{ updateProgress.toFixed(1) }}%</span>
+        </div>
+      </div>
+    </div>
+
+    <!-- Network Activity Panel (Bottom Collapsible) -->
+    <div class="console-panel" :class="{collapsed: consoleCollapsed, resizing: isResizing}">
+      <div class="console-panel-header" @click="consoleCollapsed = !consoleCollapsed">
+        <div style="display: flex; align-items: center; gap: 8px;">
+          <svg class="collapse-icon" :class="{rotated: !consoleCollapsed}" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <polyline points="18 15 12 9 6 15"></polyline>
+          </svg>
+          <span style="font-size: 12px; font-weight: 600; color: var(--text-secondary); text-transform: uppercase; letter-spacing: 0.5px;">Network Activity</span>
+        </div>
+        <div v-if="consoleLogs.length > 0" style="font-size: 11px; color: var(--text-secondary);">{{ consoleLogs.length }} event{{ consoleLogs.length !== 1 ? 's' : '' }}</div>
+      </div>
+      <div class="console-panel-content" :style="{height: consoleCollapsed ? '0px' : consolePanelHeight + 'px'}">
+        <div class="resize-handle" @mousedown.prevent="startResize" v-show="!consoleCollapsed">
+          <div class="resize-handle-bar"></div>
+        </div>
+        <div class="console-panel-logs" ref="logContainer" v-show="!consoleCollapsed">
+          <div v-if="consoleLogs.length === 0" style="color: #666; text-align: center; padding: 20px;">
+            No network activity yet...
+          </div>
+          <div v-for="(log, i) in consoleLogs" :key="i" class="log-entry">
+            <div class="log-time">[{{ log.time }}]</div>
+            <div class="log-msg" :class="log.type">{{ log.msg }}</div>
+          </div>
+        </div>
+      </div>
+    </div>
+
   </div>
 </template>
+
+<style scoped>
+/* Update Notification */
+.update-notification {
+  position: fixed;
+  bottom: 24px;
+  right: 24px;
+  width: 320px;
+  background: rgba(24, 24, 27, 0.95);
+  border: 1px solid rgba(59, 130, 246, 0.5);
+  border-radius: 8px;
+  padding: 16px;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.4);
+  z-index: 1000;
+  animation: slideInRight 0.3s ease-out;
+  backdrop-filter: blur(10px);
+}
+
+@keyframes slideInRight {
+  from {
+    transform: translateX(400px);
+    opacity: 0;
+  }
+  to {
+    transform: translateX(0);
+    opacity: 1;
+  }
+}
+
+.update-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 12px;
+}
+
+.update-title {
+  font-weight: 600;
+  color: #3b82f6;
+  font-size: 14px;
+}
+
+.dismiss-btn {
+  background: none;
+  border: none;
+  color: #71717a;
+  font-size: 24px;
+  line-height: 1;
+  cursor: pointer;
+  padding: 0;
+  width: 24px;
+  height: 24px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 4px;
+  transition: all 0.2s;
+}
+
+.dismiss-btn:hover {
+  background: rgba(255, 255, 255, 0.1);
+  color: #a1a1aa;
+}
+
+.update-body p {
+  margin: 0 0 12px 0;
+  color: #a1a1aa;
+  font-size: 13px;
+}
+
+.btn-sm {
+  padding: 6px 12px;
+  font-size: 13px;
+}
+
+.update-progress {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.progress-bar-thin {
+  flex: 1;
+  height: 6px;
+  background: rgba(255, 255, 255, 0.1);
+  border-radius: 3px;
+  overflow: hidden;
+}
+
+.progress-fill {
+  height: 100%;
+  background: linear-gradient(90deg, #3b82f6, #60a5fa);
+  transition: width 0.3s ease-out;
+}
+
+.progress-text {
+  font-size: 12px;
+  color: #71717a;
+  font-family: 'Consolas', 'Monaco', monospace;
+  min-width: 45px;
+  text-align: right;
+}
+
+/* Console Panel (Bottom Collapsible) */
+.console-panel {
+  position: fixed;
+  bottom: 0;
+  left: 240px; /* Sidebar width - FIXED */
+  right: 0;
+  background: var(--bg-app);
+  border-top: 1px solid var(--border-color);
+  z-index: 100;
+}
+
+.console-panel.collapsed {
+  /* Header stays visible */
+}
+
+.console-panel.resizing {
+  user-select: none;
+}
+
+.resize-handle {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 6px;
+  cursor: ns-resize;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 10;
+}
+
+.resize-handle:hover .resize-handle-bar {
+  background: var(--accent-color);
+  opacity: 0.3;
+}
+
+.resize-handle-bar {
+  width: 60px;
+  height: 3px;
+  background: var(--border-color);
+  border-radius: 2px;
+  opacity: 0.5;
+  transition: all 0.15s;
+}
+
+.console-panel-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 8px 20px;
+  cursor: pointer;
+  user-select: none;
+  background: var(--bg-sidebar);
+  transition: background 0.15s;
+  height: 36px;
+}
+
+.console-panel-header:hover {
+  background: var(--bg-hover);
+}
+
+.console-panel-content {
+  overflow: hidden;
+  background: var(--bg-app);
+  position: relative;
+}
+
+.console-panel:not(.resizing) .console-panel-content {
+  transition: height 0.2s ease-in-out;
+}
+
+.console-panel-logs {
+  height: calc(100% - 6px); /* Account for resize handle */
+  overflow-y: auto;
+  padding: 12px 20px;
+  padding-top: 0;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  scroll-behavior: smooth;
+}
+
+.console-panel-logs::-webkit-scrollbar {
+  width: 8px;
+}
+
+.console-panel-logs::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.console-panel-logs::-webkit-scrollbar-thumb {
+  background: var(--border-color);
+  border-radius: 4px;
+}
+
+.console-panel-logs::-webkit-scrollbar-thumb:hover {
+  background: var(--bg-hover);
+}
+
+.collapse-icon {
+  transition: transform 0.15s ease-in-out;
+}
+
+.collapse-icon.rotated {
+  transform: rotate(180deg);
+}
+</style>

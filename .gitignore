@@ -4,6 +4,7 @@
 *.so
 *.dylib
 bin/
+build/bin/
 
 # Test/Temp files
 test_folder/

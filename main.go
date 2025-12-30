@@ -3,6 +3,7 @@ package main
 import (
 	"embed"
 
+	"github.com/ebob10000/2c1f/version"
 	"github.com/wailsapp/wails/v2"
 	"github.com/wailsapp/wails/v2/pkg/options"
 	"github.com/wailsapp/wails/v2/pkg/options/assetserver"
@@ -47,7 +48,7 @@ func main() {
 			WindowIsTranslucent:  false,
 			About: &mac.AboutInfo{
 				Title:   "2c1f",
-				Message: "Peer-to-peer file transfer",
+				Message: "Peer-to-peer file transfer v" + version.Version,
 			},
 		},
 		BackgroundColour: &options.RGBA{R: 9, G: 9, B: 11, A: 255},

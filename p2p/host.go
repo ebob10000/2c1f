@@ -93,7 +93,11 @@ func (n *Node) HandlePeerFound(pi peer.AddrInfo) {
 	if pi.ID == n.Host.ID() {
 		return
 	}
-	n.Host.Connect(n.Ctx, pi)
+	if err := n.Host.Connect(n.Ctx, pi); err != nil {
+		// Log connection failures but don't fail the discovery process
+		// Peers may be temporarily unavailable or behind NAT
+		// Silently ignore connection errors as they're expected in P2P networks
+	}
 }
 
 func (n *Node) Bootstrap() error {

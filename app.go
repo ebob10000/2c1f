@@ -6,22 +6,20 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	goruntime "runtime"
 	"sync"
 	"time"
 
 	"github.com/ebob10000/2c1f/p2p"
+	"github.com/ebob10000/2c1f/settings"
 	"github.com/ebob10000/2c1f/transfer"
+	"github.com/ebob10000/2c1f/updater"
+	"github.com/ebob10000/2c1f/version"
 	"github.com/ebob10000/2c1f/words"
 	"github.com/libp2p/go-libp2p/core/network"
 	"github.com/libp2p/go-libp2p/core/peer"
 	"github.com/wailsapp/wails/v2/pkg/runtime"
 )
-
-type AppSettings struct {
-	AutoHash      bool `json:"autoHash"`
-	Compress      bool `json:"compress"`
-	CacheManifest bool `json:"cacheManifest"`
-}
 
 // TransferRecord stores info about a completed transfer
 type TransferRecord struct {
@@ -35,7 +33,7 @@ type TransferRecord struct {
 
 type App struct {
 	ctx             context.Context
-	settings        AppSettings
+	settings        settings.AppSettings
 	activeNode      *p2p.Node
 	nodeMu          sync.Mutex
 	transferHistory []TransferRecord
@@ -43,32 +41,135 @@ type App struct {
 	pauseMu         sync.Mutex
 }
 
-func (a *App) getSettingsPath() string {
-	home, _ := os.UserHomeDir()
-	return filepath.Join(home, ".2c1f-settings.json")
+// progressTracker handles progress tracking for transfers
+type progressTracker struct {
+	ctx          context.Context
+	globalSent   int64
+	globalTotal  int64
+	lastUpdate   time.Time
+	fileProgress map[string]int64
+	mu           sync.Mutex
 }
 
-func (a *App) loadSettings() {
-	path := a.getSettingsPath()
-	data, err := os.ReadFile(path)
-	if err == nil {
-		if unmarshalErr := json.Unmarshal(data, &a.settings); unmarshalErr != nil {
-			a.settings = AppSettings{AutoHash: true, Compress: false, CacheManifest: true}
-		}
-	} else {
-		a.settings = AppSettings{AutoHash: true, Compress: false, CacheManifest: true}
+func newProgressTracker(ctx context.Context, totalSize int64) *progressTracker {
+	return &progressTracker{
+		ctx:          ctx,
+		globalTotal:  totalSize,
+		fileProgress: make(map[string]int64),
 	}
 }
 
-func (a *App) GetSettings() AppSettings {
+func (pt *progressTracker) onStartFile(filename string, index, total int) {
+	runtime.EventsEmit(pt.ctx, "transfer_start_file", map[string]interface{}{
+		"filename": filename,
+		"index":    index,
+		"total":    total,
+	})
+}
+
+func (pt *progressTracker) onProgress(filename string, sent, total int64) {
+	pt.mu.Lock()
+	defer pt.mu.Unlock()
+
+	prevSent := pt.fileProgress[filename]
+	delta := sent - prevSent
+	pt.fileProgress[filename] = sent
+	pt.globalSent += delta
+
+	now := time.Now()
+	if sent == total || now.Sub(pt.lastUpdate) > 500*time.Millisecond {
+		runtime.EventsEmit(pt.ctx, "transfer_file_progress", map[string]interface{}{
+			"filename": filename,
+			"sent":     sent,
+			"total":    total,
+			"percent":  float64(sent) / float64(total) * 100,
+		})
+		runtime.EventsEmit(pt.ctx, "transfer_global_progress", map[string]interface{}{
+			"sent":    pt.globalSent,
+			"total":   pt.globalTotal,
+			"percent": float64(pt.globalSent) / float64(pt.globalTotal) * 100,
+		})
+		pt.lastUpdate = now
+	}
+}
+
+// simulateFileTransfer simulates transferring files with progress updates
+// Returns true if transfer completed, false if cancelled
+func (a *App) simulateFileTransfer(files []transfer.FileEntry, totalSize int64, direction string, checkCancel bool) bool {
+	var globalSent int64 = 0
+	for i, file := range files {
+		runtime.EventsEmit(a.ctx, "transfer_start_file", map[string]interface{}{
+			"filename": file.Path,
+			"index":    i + 1,
+			"total":    len(files),
+		})
+
+		chunkSize := int64(1024 * 1024 * 5) // 5MB chunks
+		var sent int64 = 0
+		for sent < file.Size {
+			if a.IsPaused() {
+				time.Sleep(500 * time.Millisecond)
+				continue
+			}
+
+			// Check for cancellation if requested
+			if checkCancel {
+				a.nodeMu.Lock()
+				cancelled := (a.activeNode == nil)
+				a.nodeMu.Unlock()
+				if cancelled {
+					return false
+				}
+			}
+
+			remaining := file.Size - sent
+			if remaining < chunkSize {
+				chunkSize = remaining
+			}
+			sent += chunkSize
+			globalSent += chunkSize
+			time.Sleep(50 * time.Millisecond) // Simulate network delay
+
+			runtime.EventsEmit(a.ctx, "transfer_file_progress", map[string]interface{}{
+				"filename": file.Path,
+				"sent":     sent,
+				"total":    file.Size,
+				"percent":  float64(sent) / float64(file.Size) * 100,
+			})
+
+			runtime.EventsEmit(a.ctx, "transfer_global_progress", map[string]interface{}{
+				"sent":    globalSent,
+				"total":   totalSize,
+				"percent": float64(globalSent) / float64(totalSize) * 100,
+			})
+		}
+	}
+
+	statusMsg := fmt.Sprintf("%s successfully (Simulation)", map[bool]string{true: "Sent", false: "Received"}[direction == "send"])
+	runtime.EventsEmit(a.ctx, "transfer_complete", statusMsg)
+	a.AddTransferRecord("Simulation Transfer", totalSize, direction, "complete")
+	return true
+}
+
+func (a *App) loadSettings() {
+	a.settings = settings.LoadSettings()
+}
+
+func (a *App) GetSettings() settings.AppSettings {
 	return a.settings
 }
 
-func (a *App) SaveSettings(s AppSettings) {
+func (a *App) SaveSettings(s settings.AppSettings) {
 	a.settings = s
-	path := a.getSettingsPath()
-	data, _ := json.Marshal(s)
-	os.WriteFile(path, data, 0600)
+	path := settings.GetSettingsPath()
+	data, err := json.Marshal(s)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Warning: failed to marshal settings: %v\n", err)
+		return
+	}
+	if err := os.WriteFile(path, data, 0600); err != nil {
+		fmt.Fprintf(os.Stderr, "Warning: failed to save settings: %v\n", err)
+	}
 }
 
 // NewApp creates a new App application struct
@@ -81,6 +182,21 @@ func NewApp() *App {
 
 func (a *App) startup(ctx context.Context) {
 	a.ctx = ctx
+
+	// Check for updates in background (non-blocking)
+	go func() {
+		// Wait a bit before checking to not slow down app startup
+		time.Sleep(2 * time.Second)
+
+		updateInfo, err := updater.CheckForUpdates("ebob10000/2c1f", version.Version)
+		if err != nil {
+			// Log error but don't notify user (fail silently)
+			return
+		}
+		if updateInfo != nil {
+			runtime.EventsEmit(a.ctx, "update_available", updateInfo)
+		}
+	}()
 }
 
 func (a *App) CancelTransfer() {
@@ -98,23 +214,90 @@ func (a *App) CopyToClipboard(text string) error {
 	return runtime.ClipboardSetText(a.ctx, text)
 }
 
+// GetVersion returns the current application version
+func (a *App) GetVersion() string {
+	return version.Version
+}
+
+// DownloadAndInstallUpdate downloads and installs a new version
+func (a *App) DownloadAndInstallUpdate(releaseVersion string) error {
+	// Fetch release info
+	release, err := updater.FetchLatestRelease("ebob10000/2c1f")
+	if err != nil {
+		runtime.EventsEmit(a.ctx, "update_error", map[string]string{"error": err.Error()})
+		return err
+	}
+
+	// Find correct asset for platform
+	asset, err := updater.GetAssetForPlatform(release, goruntime.GOOS, goruntime.GOARCH)
+	if err != nil {
+		runtime.EventsEmit(a.ctx, "update_error", map[string]string{"error": err.Error()})
+		return err
+	}
+
+	// Download with progress callback
+	tempPath, err := updater.DownloadUpdate(asset, func(downloaded, total int64) {
+		percent := float64(downloaded) / float64(total) * 100
+		runtime.EventsEmit(a.ctx, "update_download_progress", map[string]interface{}{
+			"downloaded": downloaded,
+			"total":      total,
+			"percent":    percent,
+		})
+	})
+	if err != nil {
+		runtime.EventsEmit(a.ctx, "update_error", map[string]string{"error": err.Error()})
+		return err
+	}
+
+	// Notify that download is complete and ready to install
+	runtime.EventsEmit(a.ctx, "update_ready", map[string]string{"version": releaseVersion})
+
+	// Replace and restart
+	exePath, err := os.Executable()
+	if err != nil {
+		runtime.EventsEmit(a.ctx, "update_error", map[string]string{"error": fmt.Sprintf("Failed to get executable path: %v", err)})
+		return err
+	}
+	if err := updater.ReplaceAndRestart(tempPath, exePath); err != nil {
+		runtime.EventsEmit(a.ctx, "update_error", map[string]string{"error": err.Error()})
+		return err
+	}
+
+	return nil
+}
+
 func (a *App) getHistoryPath() string {
-	home, _ := os.UserHomeDir()
+	home, err := os.UserHomeDir()
+	if err != nil {
+		// Fallback to current directory if home dir can't be determined
+		return ".2c1f-history.json"
+	}
 	return filepath.Join(home, ".2c1f-history.json")
 }
 
 func (a *App) loadHistory() {
 	path := a.getHistoryPath()
 	data, err := os.ReadFile(path)
-	if err == nil {
-		json.Unmarshal(data, &a.transferHistory)
+	if err != nil {
+		// File doesn't exist or can't be read - start with empty history
+		return
+	}
+	if err := json.Unmarshal(data, &a.transferHistory); err != nil {
+		fmt.Fprintf(os.Stderr, "Warning: failed to parse history file, starting fresh: %v\n", err)
+		a.transferHistory = []TransferRecord{}
 	}
 }
 
 func (a *App) saveHistory() {
 	path := a.getHistoryPath()
-	data, _ := json.Marshal(a.transferHistory)
-	os.WriteFile(path, data, 0600)
+	data, err := json.Marshal(a.transferHistory)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Warning: failed to marshal history: %v\n", err)
+		return
+	}
+	if err := os.WriteFile(path, data, 0600); err != nil {
+		fmt.Fprintf(os.Stderr, "Warning: failed to save history: %v\n", err)
+	}
 }
 
 func (a *App) GetTransferHistory() []TransferRecord {
@@ -203,46 +386,14 @@ func (a *App) StartSender(path string, compress bool, skipHash bool, cacheManife
 
 		runtime.EventsEmit(a.ctx, "sender_ready", code)
 
-		var globalSent int64 = 0
-		var globalTotal int64 = sender.Manifest.TotalSize
-		var lastUpdate time.Time
-		fileProgress := make(map[string]int64)
-
-		sender.OnStartFile = func(filename string, index, total int) {
-			runtime.EventsEmit(a.ctx, "transfer_start_file", map[string]interface{}{
-				"filename": filename,
-				"index":    index,
-				"total":    total,
-			})
-		}
-		sender.OnProgress = func(filename string, sent, total int64) {
-			prevSent := fileProgress[filename]
-			delta := sent - prevSent
-			fileProgress[filename] = sent
-
-			globalSent += delta
-
-			now := time.Now()
-			if sent == total || now.Sub(lastUpdate) > 500*time.Millisecond {
-				runtime.EventsEmit(a.ctx, "transfer_file_progress", map[string]interface{}{
-					"filename": filename,
-					"sent":     sent,
-					"total":    total,
-					"percent":  float64(sent) / float64(total) * 100,
-				})
-
-				runtime.EventsEmit(a.ctx, "transfer_global_progress", map[string]interface{}{
-					"sent":    globalSent,
-					"total":   globalTotal,
-					"percent": float64(globalSent) / float64(globalTotal) * 100,
-				})
-				lastUpdate = now
-			}
-		}
+		// Setup progress tracking
+		progress := newProgressTracker(a.ctx, sender.Manifest.TotalSize)
+		sender.OnStartFile = progress.onStartFile
+		sender.OnProgress = progress.onProgress
 
 		runtime.EventsEmit(a.ctx, "sender_status", "Starting P2P node...")
 
-		node, err := p2p.NewNode(context.Background())
+		node, err := p2p.NewNode(a.ctx)
 		if err != nil {
 			runtime.EventsEmit(a.ctx, "error", fmt.Sprintf("Failed to start p2p node: %v", err))
 			return
@@ -332,47 +483,14 @@ func (a *App) StartReceiver(code, destPath string, fastResume bool) error {
 	receiver.Code = code
 	receiver.FastResume = fastResume
 
-	var globalSent int64 = 0
-	var globalTotal int64 = 0
-	var lastUpdate time.Time
-	fileProgress := make(map[string]int64)
-
-	receiver.OnStartFile = func(filename string, index, total int) {
-		runtime.EventsEmit(a.ctx, "transfer_start_file", map[string]interface{}{
-			"filename": filename,
-			"index":    index,
-			"total":    total,
-		})
-	}
-	receiver.OnProgress = func(filename string, received, total int64) {
-		prevReceived := fileProgress[filename]
-		delta := received - prevReceived
-		fileProgress[filename] = received
-
-		globalSent += delta
-
-		now := time.Now()
-		if received == total || now.Sub(lastUpdate) > 500*time.Millisecond {
-			runtime.EventsEmit(a.ctx, "transfer_file_progress", map[string]interface{}{
-				"filename": filename,
-				"sent":     received,
-				"total":    total,
-				"percent":  float64(received) / float64(total) * 100,
-			})
-
-			if globalTotal > 0 {
-				runtime.EventsEmit(a.ctx, "transfer_global_progress", map[string]interface{}{
-					"sent":    globalSent,
-					"total":   globalTotal,
-					"percent": float64(globalSent) / float64(globalTotal) * 100,
-				})
-			}
-			lastUpdate = now
-		}
-	}
+	// Progress will be initialized after manifest is received
+	var progress *progressTracker
 
 	receiver.OnConfirmation = func(m *transfer.Manifest) bool {
-		globalTotal = m.TotalSize
+		// Initialize progress tracking with manifest total size
+		progress = newProgressTracker(a.ctx, m.TotalSize)
+		receiver.OnStartFile = progress.onStartFile
+		receiver.OnProgress = progress.onProgress
 		runtime.EventsEmit(a.ctx, "transfer_manifest", map[string]interface{}{
 			"folderName": m.FolderName,
 			"totalSize":  m.TotalSize,
@@ -383,7 +501,7 @@ func (a *App) StartReceiver(code, destPath string, fastResume bool) error {
 	}
 
 	go func() {
-		node, err := p2p.NewNode(context.Background())
+		node, err := p2p.NewNode(a.ctx)
 		if err != nil {
 			runtime.EventsEmit(a.ctx, "error", fmt.Sprintf("Failed to start node: %v", err))
 			return
@@ -493,57 +611,7 @@ func (a *App) startSimulatedSender(path string) (string, error) {
 		time.Sleep(2 * time.Second)
 		runtime.EventsEmit(a.ctx, "log", "Peer connected: SIMULATOR")
 
-		var globalSent int64 = 0
-
-		for i, file := range fakeFiles {
-			runtime.EventsEmit(a.ctx, "transfer_start_file", map[string]interface{}{
-				"filename": file.Path,
-				"index":    i + 1,
-				"total":    len(fakeFiles),
-			})
-
-			chunkSize := int64(1024 * 1024 * 5) // 5MB chunks
-			var sent int64 = 0
-			for sent < file.Size {
-				if a.IsPaused() {
-					time.Sleep(500 * time.Millisecond)
-					continue
-				}
-
-				// Check for cancel
-				a.nodeMu.Lock()
-				cancelled := (a.activeNode == nil)
-				a.nodeMu.Unlock()
-
-				if cancelled {
-					return
-				}
-
-				remaining := file.Size - sent
-				if remaining < chunkSize {
-					chunkSize = remaining
-				}
-				sent += chunkSize
-				globalSent += chunkSize
-				time.Sleep(50 * time.Millisecond) // Simulate network delay
-
-				runtime.EventsEmit(a.ctx, "transfer_file_progress", map[string]interface{}{
-					"filename": file.Path,
-					"sent":     sent,
-					"total":    file.Size,
-					"percent":  float64(sent) / float64(file.Size) * 100,
-				})
-
-				runtime.EventsEmit(a.ctx, "transfer_global_progress", map[string]interface{}{
-					"sent":    globalSent,
-					"total":   totalSize,
-					"percent": float64(globalSent) / float64(totalSize) * 100,
-				})
-			}
-		}
-
-		runtime.EventsEmit(a.ctx, "transfer_complete", "Sent successfully (Simulation)")
-		a.AddTransferRecord("Simulation Transfer", totalSize, "send", "complete")
+		a.simulateFileTransfer(fakeFiles, totalSize, "send", true)
 	}()
 	return "", nil
 }
@@ -571,47 +639,10 @@ func (a *App) startSimulatedReceiver(code, destPath string) error {
 			"files":      fakeFiles,
 		})
 
-		var globalSent int64 = 0
-		for i, file := range fakeFiles {
-			runtime.EventsEmit(a.ctx, "transfer_start_file", map[string]interface{}{
-				"filename": file.Path,
-				"index":    i + 1,
-				"total":    len(fakeFiles),
-			})
-
-			chunkSize := int64(1024 * 1024 * 5)
-			var sent int64 = 0
-			for sent < file.Size {
-				if a.IsPaused() {
-					time.Sleep(500 * time.Millisecond)
-					continue
-				}
-
-				remaining := file.Size - sent
-				if remaining < chunkSize {
-					chunkSize = remaining
-				}
-				sent += chunkSize
-				globalSent += chunkSize
-				time.Sleep(50 * time.Millisecond)
-
-				runtime.EventsEmit(a.ctx, "transfer_file_progress", map[string]interface{}{
-					"filename": file.Path,
-					"sent":     sent,
-					"total":    file.Size,
-					"percent":  float64(sent) / float64(file.Size) * 100,
-				})
-
-				runtime.EventsEmit(a.ctx, "transfer_global_progress", map[string]interface{}{
-					"sent":    globalSent,
-					"total":   totalSize,
-					"percent": float64(globalSent) / float64(totalSize) * 100,
-				})
-			}
+		if a.simulateFileTransfer(fakeFiles, totalSize, "receive", false) {
+			// Transfer completed successfully
+			runtime.EventsEmit(a.ctx, "transfer_complete", filepath.Join(destPath, "Simulation Transfer"))
 		}
-
-		runtime.EventsEmit(a.ctx, "transfer_complete", filepath.Join(destPath, "Simulation Transfer"))
-		a.AddTransferRecord("Simulation Transfer", totalSize, "receive", "complete")
 	}()
 	return nil
 }
